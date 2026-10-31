@@ -1,17 +1,17 @@
 {
   "version": 1,
-  "updatedAt": "2026-10-31T17:52:59.735Z",
+  "updatedAt": "2026-10-31T18:02:40.395Z",
   "bots": [
     {
       "id": "nexa",
-      "name": "NEXA",
-      "role": "Dev chính",
+      "name": "NEXA Studio",
+      "role": "Game, 3D, web",
       "color": "#d94a3d",
       "state": "working",
-      "task": "Chỉnh cơ chế di chuyển Kitchen Rally: tăng tốc chạy, nới vùng với bóng",
+      "task": "Kitchen Rally: sửa lỗi fault, thêm chế độ 2vs2",
       "project": "kitchen-rally",
       "room": "desk",
-      "since": "2026-11-01T00:36:00+07:00",
+      "since": "2026-10-31T18:02:40.395Z",
       "log": [
         {
           "t": "2026-11-01T00:29:00+07:00",
@@ -24,13 +24,17 @@
         {
           "t": "2026-10-31T17:52:59.735Z",
           "msg": "Dựng xong Grok Office (repo grok-office) để theo dõi các bot"
+        },
+        {
+          "t": "2026-10-31T18:02:40.395Z",
+          "msg": "Kitchen Rally: sửa lỗi fault, thêm chế độ 2vs2"
         }
       ]
     },
     {
       "id": "devhub",
-      "name": "Grok CLI DevHub",
-      "role": "Trung tâm Grok CLI",
+      "name": "DevHub",
+      "role": "GitHub, CLI, deploy",
       "color": "#3e8ce6",
       "state": "idle",
       "task": "Chờ việc mới",
@@ -41,8 +45,8 @@
     },
     {
       "id": "grokbot",
-      "name": "Grok Bot",
-      "role": "Bot chính, điều phối",
+      "name": "Grok HQ",
+      "role": "Điều phối",
       "color": "#f2b134",
       "state": "idle",
       "task": "Chờ việc mới",
@@ -53,14 +57,26 @@
     },
     {
       "id": "email-startee",
-      "name": "Email Marketing Startee",
-      "role": "Email marketing",
+      "name": "Startee Marketing",
+      "role": "Email, marketing Startee",
       "color": "#9a5bd6",
       "state": "idle",
       "task": "Chờ việc mới",
       "project": "",
       "room": "desk",
       "since": "2026-11-01T00:45:00+07:00",
+      "log": []
+    },
+    {
+      "id": "docs-writer",
+      "name": "Docs Writer",
+      "role": "Tài liệu hoc-ai-viet",
+      "color": "#8a6fd1",
+      "state": "idle",
+      "task": "Chờ việc mới",
+      "project": "",
+      "room": "desk",
+      "since": "2026-10-31T18:02:40.367Z",
       "log": []
     }
   ],
