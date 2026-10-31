@@ -1,6 +1,6 @@
 # Grok Office
 
-Văn phòng 3D trên hòn đảo nổi (cùng phong cách với [Kitchen Rally](https://roccat92.github.io/kitchen-rally/)) để xem các Grok Bot đang làm gì. Mỗi bot là một nhân vật khối ngồi ở bàn riêng, có bong bóng ghi việc đang làm, màn hình hiển thị task và tiến độ, bảng kanban theo dự án, phòng họp kính cho nhóm chat và góc cà phê.
+Văn phòng 3D là một tầng của tòa nhà cao tầng giữa thành phố (tầng 5, phía dưới là mặt tiền tòa nhà và đường phố) (cùng phong cách với [Kitchen Rally](https://roccat92.github.io/kitchen-rally/)) để xem các Grok Bot đang làm gì. Mỗi bot là một nhân vật khối ngồi ở bàn riêng, có bong bóng ghi việc đang làm, màn hình hiển thị task và tiến độ, bảng kanban theo dự án, phòng họp kính cho nhóm chat và góc cà phê.
 
 - Trang chạy thử: https://roccat92.github.io/grok-office/
 - Không cần build. Tĩnh hoàn toàn: `index.html`, `office.js`, `status.json`.
@@ -125,3 +125,13 @@ GitHub Pages từ nhánh `main`, thư mục gốc. Mỗi lần push, Pages mất
 - Cần Internet để tải Three.js từ unpkg.
 - Bubble có thể chồng lên nhau khi nhiều bot đứng gần nhau (đã tự đẩy lên, và rút gọn trong phòng họp).
 - Chưa có người dùng thật kiểm tra hiệu năng trên máy yếu. Thử nghiệm headless chạy bằng phần mềm nên chậm hơn thật.
+
+
+## Thành phố và ngày đêm
+
+- Bên ngoài là thành phố low-poly: nhà chọc trời có cửa sổ sáng đèn về đêm, đường phố với xe chạy (dừng đèn đỏ, bật đèn pha về đêm), đèn giao thông, người đi bộ trên vỉa hè, đèn đường. Phía xa là đường chân trời với skyline.
+- Bên trong: đèn trần treo trên các thanh ray, tự bật khi trời tối (cả đèn điểm chiếu sáng nền nhà).
+- Chu kỳ ngày đêm theo giờ thật Asia/Bangkok (mặc định). Bầu trời, mặt trời / mặt trăng + sao, ánh sáng, cửa sổ nhà cao tầng, đèn pha xe đều đổi theo giờ.
+- Tham số URL: `?time=day` (13:00), `?time=night` (23:30), `?time=cycle` (chạy nhanh 1 ngày = 72 giây, đổi bằng `&speed=<giây>`), `?hour=18.5` hoặc `?time=18.5` (ghim 1 giờ cụ thể). Khi ở chế độ demo, đồng hồ ở HUD hiện giờ mô phỏng kèm nhãn "(demo ...)".
+- Điện thoại / màn hình hẹp: ít xe và người hơn, bóng đổ 1024, pixel ratio tối đa 1.5, khung hình tập trung vào văn phòng. `?quality=low` ép chế độ nhẹ.
+- Kiểm tra: `node tests/serve.cjs` rồi `node tests/daynight.cjs`.

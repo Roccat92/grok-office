@@ -12,7 +12,7 @@ const mk = (id, state, extra = {}) => ({ id, name: id.toUpperCase(), role: 'x', 
   await p.waitForTimeout(1500); phase = 2; const t0 = Date.now(); let minGap = 1e9, maxOv = 0, samples = 0, shotDone = false;
   while (Date.now() - t0 < dur) {
     await p.waitForTimeout(400); const r = await p.evaluate(() => ({ g: window.__OFFICE.minGap(), o: window.__OFFICE.labelOverlap(), n: Object.keys(window.__OFFICE.bots).length }));
-    if (r.n === 8) { samples++; minGap = Math.min(minGap, r.g); maxOv = Math.max(maxOv, r.o); }
+    if (process.env.DBG && r.o) console.log(Math.round((Date.now()-t0)/1000), r.o, r.g.toFixed(2)); if (r.n === 8) { samples++; minGap = Math.min(minGap, r.g); maxOv = Math.max(maxOv, r.o); }
     if (!shotDone && Date.now() - t0 > dur * 0.6) { await p.screenshot({ path: `/workspace/grok-office/shots/${shot}.png` }); shotDone = true; }
   }
   console.log(JSON.stringify({ samples, minGap: +minGap.toFixed(2), maxLabelOverlaps: maxOv, errs }));

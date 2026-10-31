@@ -4,7 +4,6 @@ import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
 const CONFIG = {
   pollMs: 10000, staleMs: 60000, fetchTimeoutMs: 8000, maxPixelRatio: 2, shadowMap: 2048,
   walkSpeed: 3.0,
-  island: { cx: 0.5, cz: 0.8, hx: 13.6, hz: 12.0 },
   office: { x0: -9, x1: 10, z0: -6, z1: 7, wallH: 3.4 },
   cam: { yawDeg: 45, pitchDeg: 35, focusZoom: 0.36 },
   desk: { cols: [-6.6, -3.8, -1.0, 1.8], rows: [-3.4, 0.9], laneA: -0.85, laneB: 3.2, laneX: 3.5 },
@@ -15,43 +14,17 @@ const STATE = {
   working: { label: 'Đang làm', color: '#5ad07a' }, idle: { label: 'Rảnh', color: '#a7b2ac' }, meeting: { label: 'Họp', color: '#5aa9ff' },
   blocked: { label: 'Bị chặn', color: '#ff5a4d' }, done: { label: 'Xong', color: '#e8ff5a' }
 };
+const QS = new URLSearchParams(location.search), HORIZON = isFinite(parseFloat(QS.get('horizon'))) ? parseFloat(QS.get('horizon')) : 0.12;   // screen height of the city horizon (-1 bottom .. 1 top)
+const MOBILE = QS.get('quality') === 'low' || innerWidth <= 760 || (matchMedia && matchMedia('(pointer: coarse)').matches);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const lerp = (a, b, t) => a + (b - a) * t;
 const rr = (a, b) => a + Math.random() * (b - a);
 const $ = (s) => document.querySelector(s);
 const hash = (s) => { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; };
 
-// ================================================================ STATIC GEOMETRY BATCH (merged, flat-shaded, vertex colours)
-class Batch {
-  constructor() {
-    this.pos = []; this.nor = []; this.col = [];
-    this.m = new THREE.Matrix4(); this.q = new THREE.Quaternion(); this.e = new THREE.Euler(); this.p = new THREE.Vector3(); this.s = new THREE.Vector3();
-    this.v = new THREE.Vector3(); this.n = new THREE.Vector3(); this.nm = new THREE.Matrix3(); this.c = new THREE.Color();
-    this.boxGeo = Batch.flat(new THREE.BoxGeometry(1, 1, 1));
-  }
-  static flat(g) { const n = g.index ? g.toNonIndexed() : g; n.computeVertexNormals(); return n; }
-  addGeo(geo, color, x, y, z, sx = 1, sy = 1, sz = 1, rx = 0, ry = 0, rz = 0) {
-    this.m.compose(this.p.set(x, y, z), this.q.setFromEuler(this.e.set(rx, ry, rz)), this.s.set(sx, sy, sz));
-    this.nm.getNormalMatrix(this.m);
-    const pa = geo.attributes.position, na = geo.attributes.normal; this.c.set(color);
-    for (let i = 0; i < pa.count; i++) {
-      this.v.fromBufferAttribute(pa, i).applyMatrix4(this.m); this.pos.push(this.v.x, this.v.y, this.v.z);
-      this.n.fromBufferAttribute(na, i).applyMatrix3(this.nm).normalize(); this.nor.push(this.n.x, this.n.y, this.n.z);
-      this.col.push(this.c.r, this.c.g, this.c.b);
-    }
-  }
-  box(x, y, z, w, h, d, color, ry = 0, rx = 0, rz = 0) { this.addGeo(this.boxGeo, color, x, y, z, w, h, d, rx, ry, rz); }
-  // box between x0..x1, y0..y1, z0..z1
-  span(x0, x1, y0, y1, z0, z1, color) { this.box((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2, x1 - x0, y1 - y0, z1 - z0, color); }
-  build(material, cast = true, receive = true) {
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(this.pos, 3));
-    g.setAttribute('normal', new THREE.Float32BufferAttribute(this.nor, 3));
-    g.setAttribute('color', new THREE.Float32BufferAttribute(this.col, 3));
-    g.computeBoundingSphere();
-    const m = new THREE.Mesh(g, material); m.castShadow = cast; m.receiveShadow = receive; return m;
-  }
-}
+import { Batch } from './batch.js';
+import { City, Clock, envAt, GROUND_Y } from './city.js';
+
 const MAT_V = new THREE.MeshLambertMaterial({ vertexColors: true });
 const MAT_GLASS = new THREE.MeshLambertMaterial({ vertexColors: true, transparent: true, opacity: 0.22, depthWrite: false });
 const BOX = new THREE.BoxGeometry(1, 1, 1); const MATS = new Map();
@@ -88,35 +61,27 @@ class Venue {
   constructor(scene) {
     this.scene = scene; this.slots = [];
     const B = new Batch(), F = new Batch();
-    this.island(B); this.floor(B); this.walls(B, F); this.meeting(B, F); this.coffee(B); this.outside(B); this.props(B);
+    this.slab(B, F); this.floor(B); this.walls(B, F); this.meeting(B, F); this.coffee(B); this.props(B); this.ceiling(B);
     scene.add(B.build(MAT_V));
     const glass = F.build(MAT_GLASS, false, false); glass.renderOrder = 3; scene.add(glass);
     for (let i = 0; i < 8; i++) this.slots.push(this.makeDesk(i));
     this.makeBoards(); this.makeGraph();
   }
-  island(B) {
-    const { cx, cz, hx, hz } = CONFIG.island, cell = 1.45;
-    const nx = Math.round(2 * hx / cell), nz = Math.round(2 * hz / cell), cw = 2 * hx / nx, cd = 2 * hz / nz;
-    const layers = [[-0.08, -0.5, 0x4f9d4a], [-0.5, -1.7, 0x9a6b43], [-1.7, -3.1, 0x6b4630], [-3.1, -9, 0x6a5e55]];
-    let seed = 11; const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
-    for (let i = 0; i < nx; i++) for (let j = 0; j < nz; j++) {
-      const x = cx - hx + (i + 0.5) * cw, z = cz - hz + (j + 0.5) * cd;
-      const edge = Math.min(hx - Math.abs(x - cx), hz - Math.abs(z - cz));
-      const isEdge = edge < cw * 0.9, n = clamp(edge / 11, 0, 1);
-      const bottom = -(1.6 + 4.6 * Math.pow(n, 0.75) + rnd() * 0.9);
-      const jx = isEdge ? (rnd() - 0.5) * 0.35 : 0, jz = isEdge ? (rnd() - 0.5) * 0.35 : 0;
-      const grass = (i + j) % 2 ? 0x5aa653 : 0x4f9d4a;
-      for (let k = 0; k < layers.length; k++) {
-        const [y1, y0, col] = layers[k]; if (bottom > y1) break;
-        const lo = Math.max(y0, bottom), h = y1 - lo;
-        let c = col; if (k === 0) c = grass; else if (rnd() < 0.18) c = layers[Math.min(3, k + (rnd() < 0.5 ? 1 : -1))][2];
-        B.box(x + jx, lo + h / 2, z + jz, cw + 0.02, h, cd + 0.02, c);
-      }
-    }
-    // paved ring + path to the entrance
-    const pv = 0xcfcdc6;
-    B.span(O.x0 - 1.4, O.x1 + 1.4, -0.09, -0.02, O.z0 - 1.4, O.z1 + 1.4, pv);
-    B.span(2.5, 4.5, -0.09, -0.02, O.z1, O.z1 + 6, pv);
+  // floor plate of the tower: office + lobby terrace with glass railing and the lift
+  slab(B, F) {
+    const x0 = O.x0 - 1.4, x1 = O.x1 + 1.4, z0 = O.z0 - 1.4, z1 = O.z1 + 4.4, pv = 0xcfcdc6;
+    B.span(x0, x1, -0.45, -0.02, z0, z1, 0x8d9199); B.span(x0 - 0.05, x1 + 0.05, -0.12, -0.02, z0 - 0.05, z1 + 0.05, 0x5f646c);   // slab + dark edge band
+    B.span(x0, x1, -0.03, 0, z0, z1, pv); B.span(2.5, 4.5, -0.01, 0.005, O.z1, z1, 0xb9b6ac);
+    // glass railing on all four slab edges (south + east are the ones the camera looks over)
+    const gl = (a, b, c, d) => F.span(a, b, 0.05, 1.05, c, d, 0xbfe3f5), fr = 0x2c3138;
+    gl(x0, x1, z1 - 0.05, z1); gl(x1 - 0.05, x1, z0, z1); gl(x0, x1, z0, z0 + 0.05); gl(x0, x0 + 0.05, z0, z1);
+    B.span(x0, x1, 1.05, 1.11, z1 - 0.07, z1, fr); B.span(x1 - 0.07, x1, 1.05, 1.11, z0, z1, fr); B.span(x0, x1, 1.05, 1.11, z0, z0 + 0.07, fr); B.span(x0, x0 + 0.07, 1.05, 1.11, z0, z1, fr);
+    for (let x = x0; x <= x1 + 0.01; x += 2.2) B.span(x - 0.04, x + 0.04, 0, 1.05, z1 - 0.07, z1, fr);
+    for (let z = z0; z <= z1 + 0.01; z += 2.2) B.span(x1 - 0.07, x1, 0, 1.05, z - 0.04, z + 0.04, fr);
+    // lift lobby: steel shaft on the west end of the terrace, doors on its east face (bots arrive here)
+    const lx0 = -5.4, lx1 = -3.6, lz0 = O.z1 + 2.4, lz1 = O.z1 + 4.3;
+    B.span(lx0, lx1, 0, 3.2, lz0, lz1, 0x9aa3ad); B.span(lx0 - 0.08, lx1 + 0.08, 3.2, 3.35, lz0 - 0.08, lz1 + 0.08, 0x5f646c);
+    B.span(lx1, lx1 + 0.04, 0, 2.5, lz0 + 0.25, lz1 - 0.25, 0x3b4048); B.span(lx1, lx1 + 0.06, 0, 2.45, (lz0 + lz1) / 2 - 0.02, (lz0 + lz1) / 2 + 0.02, 0x1d2025); B.span(lx1, lx1 + 0.05, 2.6, 2.75, (lz0 + lz1) / 2 - 0.2, (lz0 + lz1) / 2 + 0.2, 0xe8ff5a);
   }
   floor(B) {
     B.span(O.x0, O.x1, -0.2, 0, O.z0, O.z1, 0xd9c9a6);           // wooden floor
@@ -197,32 +162,36 @@ class Venue {
     B.span(x, x + 0.5, 1.9, 2.5, 3.9, 4.9, 0x8b7a63); // wall cabinet
     B.span(x + 1.2, x + 1.4, 0, 0.02, 3.6, 6.1, 0xa0b0a8);
   }
-  outside(B) {
-    const cone = Batch.flat(new THREE.ConeGeometry(1, 1, 6)), ico = Batch.flat(new THREE.IcosahedronGeometry(1, 0));
-    const pine = (x, z, s) => { B.box(x, 0.5 * s, z, 0.4 * s, 1.0 * s, 0.4 * s, 0x6b4630); B.addGeo(cone, 0x1f5a3a, x, 1.9 * s, z, 1.9 * s, 2.2 * s, 1.9 * s); B.addGeo(cone, 0x246b44, x, 3.1 * s, z, 1.5 * s, 1.9 * s, 1.5 * s); B.addGeo(cone, 0x2b7a4e, x, 4.1 * s, z, 1.0 * s, 1.5 * s, 1.0 * s); };
-    const round = (x, z, s, c) => { B.box(x, 0.6 * s, z, 0.35 * s, 1.2 * s, 0.35 * s, 0x6b4630); B.addGeo(ico, c, x, 1.9 * s, z, 1.3 * s, 1.15 * s, 1.3 * s, 0.3, 0.5, 0); B.addGeo(ico, 0x6fb85a, x + 0.35 * s, 2.5 * s, z - 0.2 * s, 0.8 * s, 0.7 * s, 0.8 * s); };
-    for (let x = -11.5; x <= 12.5; x += 3.2) pine(x + (hash('p' + x) % 7) * 0.1, O.z0 - 3.2 - (hash('q' + x) % 5) * 0.2, 0.8 + (hash('r' + x) % 5) * 0.05);
-    for (let z = -4; z <= 10; z += 3.4) pine(O.x0 - 3.1 - (hash('s' + z) % 5) * 0.2, z, 0.8 + (hash('t' + z) % 5) * 0.05);
-    round(O.x1 + 2.6, -4, 1.1, 0x4f9d4a); round(O.x1 + 3.0, 2.5, 1.0, 0x5aa653); round(O.x1 + 2.4, O.z1 + 2.5, 1.2, 0x4f9d4a); round(O.x0 - 2.6, O.z1 + 2.8, 1.1, 0x5aa653); round(0.5, O.z1 + 6.0, 0.9, 0x4f9d4a);
-    // bushes
-    for (const [x, z] of [[-6, O.z1 + 1.6], [-4.8, O.z1 + 1.9], [8.2, O.z1 + 1.8], [O.x1 + 1.5, -1.5], [O.x0 - 1.6, -5.5]]) B.addGeo(ico, 0x3f8f4a, x, 0.35, z, 0.75, 0.55, 0.65);
-  }
   props(B) {
     // entrance sign board on two posts
     for (const px of [-0.9, 1.7]) B.span(px - 0.07, px + 0.07, 0, 1.3, O.z1 + 3.0, O.z1 + 3.14, 0x2c3138);
     B.span(-1.1, 1.9, 0.8, 1.6, O.z1 + 2.96, O.z1 + 3.0, 0x1f5a3a); // texture added in makeBoards
     // benches near the entrance
-    for (const bx of [-4.0, 8.5]) { B.span(bx - 0.9, bx + 0.9, 0.42, 0.5, O.z1 + 2.0, O.z1 + 2.45, 0x9a6b43); B.span(bx - 0.9, bx + 0.9, 0.6, 0.95, O.z1 + 2.42, O.z1 + 2.5, 0x9a6b43); for (const l of [-0.75, 0.75]) B.span(bx + l - 0.05, bx + l + 0.05, 0, 0.42, O.z1 + 2.1, O.z1 + 2.35, 0x2c3138); }
-    // light poles
-    for (const [x, z] of [[-1.5, O.z1 + 1.5], [6.0, O.z1 + 1.5], [O.x1 + 1.3, 1.0], [O.x0 - 1.0, O.z1 + 1.0]]) { B.span(x - 0.06, x + 0.06, 0, 3.0, z - 0.06, z + 0.06, 0x2c3138); B.span(x - 0.2, x + 0.2, 3.0, 3.18, z - 0.2, z + 0.2, 0x2c3138); B.span(x - 0.14, x + 0.14, 2.9, 3.0, z - 0.14, z + 0.14, 0xfff3b0); }
-    // bins
+    for (const bx of [-8.0, 8.5]) { B.span(bx - 0.9, bx + 0.9, 0.42, 0.5, O.z1 + 2.0, O.z1 + 2.45, 0x9a6b43); B.span(bx - 0.9, bx + 0.9, 0.6, 0.95, O.z1 + 2.42, O.z1 + 2.5, 0x9a6b43); for (const l of [-0.75, 0.75]) B.span(bx + l - 0.05, bx + l + 0.05, 0, 0.42, O.z1 + 2.1, O.z1 + 2.35, 0x2c3138); }
+    // bins + terrace planters
     for (const [x, z] of [[5.2, O.z1 + 1.4], [-2.8, O.z1 + 1.4]]) B.span(x - 0.2, x + 0.2, 0, 0.7, z - 0.2, z + 0.2, 0x4a5568);
-    // patio umbrella table (red and white), front-right
-    const ux = 7.2, uz = O.z1 + 3.8;
-    B.span(ux - 0.04, ux + 0.04, 0, 2.2, uz - 0.04, uz + 0.04, 0x2c3138); B.box(ux, 0.75, uz, 0.9, 0.06, 0.9, 0xe9e2d3);
-    const cone = Batch.flat(new THREE.ConeGeometry(1, 1, 8)); B.addGeo(cone, 0xc23a2e, ux, 2.45, uz, 1.5, 0.55, 1.5, 0, 0.4, 0);
-    for (const [sx, sz] of [[-0.8, 0], [0.8, 0], [0, 0.8]]) { B.box(ux + sx, 0.4, uz + sz, 0.35, 0.06, 0.35, 0xc23a2e); B.box(ux + sx, 0.2, uz + sz, 0.06, 0.38, 0.06, 0x2c3138); }
+    const ico = Batch.flat(new THREE.IcosahedronGeometry(1, 0));
+    for (const [x, z] of [[-9.4, O.z1 + 3.4], [10.2, O.z1 + 3.4], [10.2, -6.2], [-9.4, -6.3]]) { B.span(x - 0.4, x + 0.4, 0, 0.5, z - 0.4, z + 0.4, 0x6b6e75); B.addGeo(ico, 0x3f9e4a, x, 1.0, z, 0.55, 0.6, 0.55); B.addGeo(ico, 0x57b45a, x + 0.2, 1.35, z - 0.1, 0.35, 0.4, 0.35); }
   }
+  // ---- ceiling track lights (hung from beams just under the wall tops); the panels glow at night
+  ceiling(B) {
+    const H = O.wallH;
+    this.panelMat = new THREE.MeshBasicMaterial({ color: 0x8b8f96 });
+    const panels = [];
+    for (const col of D.cols) for (const rz of D.rows) panels.push([col, rz + 0.3, 1.7, 0.5]);
+    panels.push([6.6, -3.05, 1.5, 0.5], [8.6, -3.05, 1.5, 0.5], [-7.0, 5.1, 0.9, 0.5], [2.6, 5.4, 1.7, 0.5]);
+    this.lampPoints = []; const beams = new Set();
+    for (const [x, z, w, d] of panels) {
+      B.span(x - 0.03, x + 0.03, H - 0.26, H, z - 0.03, z + 0.03, 0x2c3138); B.span(x - w / 2, x + w / 2, H - 0.34, H - 0.26, z - d / 2, z + d / 2, 0xe6e6e6);
+      const m = new THREE.Mesh(BOX, this.panelMat); m.scale.set(w - 0.1, 0.03, d - 0.1); m.position.set(x, H - 0.35, z); this.scene.add(m);
+      beams.add(z.toFixed(2));
+    }
+    for (const zz of beams) B.span(O.x0 + 0.3, O.x1 - 0.25, H - 0.04, H, +zz - 0.04, +zz + 0.04, 0x2c3138);
+    this.glowMat = new THREE.MeshBasicMaterial({ map: (() => { const c = document.createElement('canvas'); c.width = c.height = 64; const x = c.getContext('2d'), g = x.createRadialGradient(32, 32, 0, 32, 32, 32); g.addColorStop(0, 'rgba(255,236,190,.9)'); g.addColorStop(1, 'rgba(255,236,190,0)'); x.fillStyle = g; x.fillRect(0, 0, 64, 64); return new THREE.CanvasTexture(c); })(), transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
+    for (const [x, z, w] of panels) { const g = new THREE.Mesh(new THREE.PlaneGeometry(w * 2.6, 2.6).rotateX(-Math.PI / 2), this.glowMat); g.position.set(x, 0.035, z + 0.6); g.renderOrder = 4; this.scene.add(g); }
+    for (const [x, y, z] of [[-5.2, 2.7, 0.3], [0.6, 2.7, 0.3], [7.6, 2.7, -3.0], [-5.4, 2.7, 4.7]]) { const pl = new THREE.PointLight(0xffe2b0, 0, 11, 1.6); pl.position.set(x, y, z); this.scene.add(pl); this.lampPoints.push(pl); }
+  }
+  setLamp(v) { const k = Math.min(1, v * 1.15); this.panelMat.color.set(0x8b8f96).lerp(new THREE.Color(0xfff1c8), k); this.glowMat.opacity = k * 0.55; for (const p of this.lampPoints) p.intensity = k * 30; }
   // ---- per-slot desk (monitor, chair, plant) --------------------------------------------------
   makeDesk(i) {
     const { x, z } = slotPos(i), B = new Batch(), g = new THREE.Group(); g.position.set(x, 0, z);
@@ -334,8 +303,8 @@ class Venue {
     // lanes
     const laneA = [], laneB = [];
     for (let c = 0; c < 4; c++) { node('XA' + c, D.cols[c], D.laneA); node('XB' + c, D.cols[c], D.laneB); laneA.push('XA' + c); laneB.push('XB' + c); }
-    node('LA', D.laneX, D.laneA); node('LM', D.laneX, 1.4); node('LB', D.laneX, D.laneB); node('EN', D.laneX, O.z1 + 0.2); node('EO', D.laneX, O.z1 + 3.4);
-    chain([...laneA, 'LA']); chain([...laneB, 'LB']); chain(['LA', 'LM', 'LB', 'EN', 'EO']);
+    node('LA', D.laneX, D.laneA); node('LM', D.laneX, 1.4); node('LB', D.laneX, D.laneB); node('EN', D.laneX, O.z1 + 0.2); node('EP', D.laneX, O.z1 + 2.2); node('EO', -2.3, O.z1 + 3.3);
+    chain([...laneA, 'LA']); chain([...laneB, 'LB']); chain(['LA', 'LM', 'LB', 'EN', 'EP', 'EO']);
     // desks
     for (let i = 0; i < 8; i++) { const p = slotPos(i); node('S' + i, p.x, p.z + 1.0); edge('S' + i, (p.row ? 'XB' : 'XA') + (i >> 1)); }
     // coffee
@@ -558,9 +527,9 @@ class Rig {
     this.cam = new THREE.OrthographicCamera(-10, 10, 10, -10, 1, 400);
     this.yaw = CONFIG.cam.yawDeg * Math.PI / 180; this.pitch = CONFIG.cam.pitchDeg * Math.PI / 180;
     this.aspect = 1; this.zoom = 1; this.zoomT = 1; this.T = new THREE.Vector3(); this.TT = new THREE.Vector3(); this.follow = null; this.s0 = 10;
-    const { cx, cz, hx, hz } = CONFIG.island; this.pts = [];
-    for (const x of [cx - hx, cx + hx]) for (const z of [cz - hz, cz + hz]) for (const y of [-6.4, 5.6]) this.pts.push([x, y, z]);
-    this.ptsOffice = []; for (const x of [-10.5, 11.5]) for (const z of [-7.5, 9.5]) for (const y of [-0.6, 4.6]) this.ptsOffice.push([x, y, z]);
+    this.pts = [];
+    for (const x of [-13, 15.5]) for (const z of [-10, 15.5]) for (const y of [GROUND_Y, 5.0]) this.pts.push([x, y, z]);
+    this.ptsOffice = []; for (const x of [-10.5, 11.5]) for (const z of [-7.5, 11.5]) for (const y of [-0.6, 4.6]) this.ptsOffice.push([x, y, z]);
     this.fit(); this.T.copy(this.TT); this.place();
   }
   fit() {
@@ -568,9 +537,11 @@ class Rig {
     const R = [Math.cos(y), 0, -Math.sin(y)], U = [-sp * Math.sin(y), cp, -sp * Math.cos(y)];
     let a = 1e9, b = -1e9, c = 1e9, d = -1e9;
     for (const q of (this.aspect < 1 ? this.ptsOffice : this.pts)) { const r = q[0] * R[0] + q[2] * R[2], u = q[0] * U[0] + q[1] * U[1] + q[2] * U[2]; a = Math.min(a, r); b = Math.max(b, r); c = Math.min(c, u); d = Math.max(d, u); }
+    if (this.aspect >= 1) d += (d - c) * 0.2;   // headroom for the sky strip
     const rc = (a + b) / 2, uc = (c + d) / 2; this.s0 = Math.max((d - c) / 2, (b - a) / 2 / this.aspect) * 1.06;
     this.home = new THREE.Vector3(R[0] * rc + U[0] * uc, R[1] * rc + U[1] * uc, R[2] * rc + U[2] * uc);
     if (!this.follow) this.TT.copy(this.home);
+    this.uc = uc; this.rc = rc; if (this.onFit) this.onFit();
   }
   resize(w, h) { this.aspect = w / Math.max(1, h); this.fit(); this.place(); }
   focus(actor) { this.follow = actor; this.zoomT = CONFIG.cam.focusZoom; }
@@ -587,7 +558,7 @@ class Rig {
 }
 
 // ================================================================ DATA (fetch, normalise, diff)
-const QS = new URLSearchParams(location.search);
+
 const SRC = QS.get('src') || './status.json';
 const POLL_MS = Math.max(2000, (+QS.get('interval') || 0) * 1000 || CONFIG.pollMs);
 const fmtTime = new Intl.DateTimeFormat('vi-VN', { timeZone: 'Asia/Bangkok', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
@@ -619,13 +590,16 @@ function normalize(raw) {
 class App {
   constructor() {
     this.canvas = $('#gl'); this.stage = $('#stage');
-    const r = this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: true, powerPreference: 'high-performance' });
-    r.setPixelRatio(Math.min(window.devicePixelRatio || 1, CONFIG.maxPixelRatio)); r.shadowMap.enabled = true; r.shadowMap.type = THREE.PCFSoftShadowMap;
-    this.scene = new THREE.Scene(); this.scene.background = new THREE.Color(0xede8df);
-    this.scene.add(new THREE.HemisphereLight(0xfff6e6, 0x9a8f78, 1.5));
-    const sun = new THREE.DirectionalLight(0xffe2b8, 2.5); sun.position.set(-14, 28, 7); sun.castShadow = true; sun.shadow.mapSize.set(CONFIG.shadowMap, CONFIG.shadowMap);
-    const sc = sun.shadow.camera; sc.left = -26; sc.right = 26; sc.top = 26; sc.bottom = -26; sc.near = 1; sc.far = 90; sun.shadow.bias = -0.0006; sun.shadow.normalBias = 0.03; this.scene.add(sun);
+    const r = this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: !MOBILE, alpha: true, powerPreference: 'high-performance' });
+    r.setPixelRatio(Math.min(window.devicePixelRatio || 1, MOBILE ? 1.5 : CONFIG.maxPixelRatio)); r.setClearColor(0x000000, 0); r.localClippingEnabled = true; r.shadowMap.enabled = true; r.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.scene = new THREE.Scene(); this.scene.fog = new THREE.Fog(0xcde7f6, 150, 300);   // the sky is CSS behind the transparent canvas
+    this.hemi = new THREE.HemisphereLight(0xfff6e6, 0x9a8f78, 1.5); this.scene.add(this.hemi);
+    const sun = this.sun = new THREE.DirectionalLight(0xffe2b8, 2.5); sun.position.set(-14, 28, 7); sun.castShadow = true; const sm = MOBILE ? 1024 : CONFIG.shadowMap; sun.shadow.mapSize.set(sm, sm);
+    const sc = sun.shadow.camera; sc.left = -26; sc.right = 26; sc.top = 26; sc.bottom = -26; sc.near = 1; sc.far = 130; sun.shadow.bias = -0.0006; sun.shadow.normalBias = 0.03; this.scene.add(sun);
     this.rig = new Rig(); this.venue = new Venue(this.scene);
+    this.city = new City(this.scene, { mobile: MOBILE, maxAniso: r.capabilities.getMaxAnisotropy() });
+    this.rig.onFit = () => this.city.setHorizon(this.rig.uc + this.rig.s0 * HORIZON, this.rig); this.rig.onFit();
+    this.clock = new Clock(QS); this.skyT = 0; this.makeSky();
     this.actors = new Map(); this.data = null; this.selected = null; this.tmp = new THREE.Vector3(); this.tmp2 = new THREE.Vector3();
     this.meetSeats = new Array(8).fill(null); this.labels = new Map();
     this.conn = { lastOk: 0, err: null, lastFetch: 0 };
@@ -635,6 +609,46 @@ class App {
     this.venue.drawKanban([]); this.venue.drawGroups([], [], new Set());
     this.last = performance.now(); this.poll(); setInterval(() => this.poll(), POLL_MS); setInterval(() => this.tickUI(), 500); this.tickUI();
     requestAnimationFrame((t) => this.frame(t));
+  }
+  makeSky() {
+    this.elSky = $('#sky'); this.elSun = $('#sun'); this.elMoon = $('#moon'); this.elStars = $('#stars');
+    const c = document.createElement('canvas'); c.width = c.height = 512; const x = c.getContext('2d'); let sd = 7; const rn = () => { sd = (sd * 16807) % 2147483647; return sd / 2147483647; };
+    for (let i = 0; i < 160; i++) { x.fillStyle = `rgba(255,255,${230 + Math.floor(rn() * 25)},${0.35 + rn() * 0.6})`; const r = rn() < 0.1 ? 1.8 : 1; x.fillRect(rn() * 512, rn() * 512, r, r); }
+    this.elStars.style.backgroundImage = `url(${c.toDataURL()})`;
+    // distant skyline beyond the horizon haze: silhouette mask (tinted by the sky) + window dots (night only)
+    const W = 1400, Hh = 260, sk = document.createElement('canvas'), wn = document.createElement('canvas'); sk.width = wn.width = W; sk.height = wn.height = Hh;
+    const a = sk.getContext('2d'), w = wn.getContext('2d'); a.fillStyle = '#000'; w.fillStyle = '#ffe2a0';
+    for (let x = 0; x < W;) {
+      const bw = 34 + rn() * 70, bh = 40 + Math.pow(rn(), 1.7) * 190; a.fillRect(x, Hh - bh, bw, bh);
+      if (rn() < 0.25) a.fillRect(x + bw / 2 - 1, Hh - bh - 26, 2, 26);
+      for (let yy = Hh - bh + 8; yy < Hh - 6; yy += 9) for (let xx = x + 5; xx < x + bw - 6; xx += 8) if (rn() < 0.42) { w.globalAlpha = 0.5 + rn() * 0.5; w.fillRect(xx, yy, 3, 4); }
+      x += bw + 2 + rn() * 8;
+    }
+    const m = `url(${sk.toDataURL()})`; this.elSkyline = $('#skyline'); this.elSkyWin = $('#skywin');
+    for (const [el, img] of [[this.elSkyline, m], [this.elSkyWin, `url(${wn.toDataURL()})`]]) { el.style.backgroundImage = img; }
+    this.elSkyline.style.webkitMaskImage = this.elSkyline.style.maskImage = m; this.elSkyline.style.backgroundImage = 'none'; this.elHz = new THREE.Vector3();
+  }
+  placeSkyline() {   // keep the skyline sitting on the horizon edge of the ground, also while the camera moves/zooms
+    const rig = this.rig, y = rig.yaw, p = rig.pitch, R = [Math.cos(y), 0, -Math.sin(y)], U = [-Math.sin(p) * Math.sin(y), Math.cos(p), -Math.sin(p) * Math.cos(y)], upH = rig.uc + rig.s0 * HORIZON;
+    this.elHz.set(R[0] * rig.rc + U[0] * upH, R[1] * rig.rc + U[1] * upH, R[2] * rig.rc + U[2] * upH).project(rig.cam);
+    const sy = (-this.elHz.y * 0.5 + 0.5) * this.H, h = Math.min(this.H * 0.3, 190);
+    for (const el of [this.elSkyline, this.elSkyWin]) { el.style.height = h + 'px'; el.style.transform = `translateY(${(sy - h + 1).toFixed(1)}px)`; el.style.display = sy < -10 || sy > this.H + h ? 'none' : 'block'; }
+  }
+  applyEnv(dt) {
+    const hour = this.clock.hour(), env = envAt(hour); this.env = env;
+    this.hemi.color.copy(env.hs); this.hemi.groundColor.copy(env.hg); this.hemi.intensity = env.hemi;
+    this.sun.color.copy(env.keyCol); this.sun.intensity = env.key; this.sun.position.copy(env.sunPos).multiplyScalar(60); this.sun.castShadow = env.sunUp && env.key > 0.3;
+    this.venue.setLamp(env.lamp); this.city.update(dt, env, this.scene);
+    this.placeSkyline();
+    this.skyT -= dt; if (this.skyT > 0) return; this.skyT = 0.2;
+    const top = '#' + env.top.getHexString(), bot = '#' + env.bot.getHexString();
+    this.elSky.style.background = `linear-gradient(to bottom, ${top} 0%, ${bot} 30%, ${bot} 100%)`;
+    const night = env.lamp, ph = env.phase, el = env.sunUp ? this.elSun : this.elMoon, other = env.sunUp ? this.elMoon : this.elSun;
+    other.style.display = 'none'; el.style.display = 'block'; el.style.left = (10 + 80 * ph).toFixed(1) + '%'; el.style.top = (23 - 19 * Math.sin(Math.PI * ph)).toFixed(1) + '%';
+    const sil = env.bot.clone().lerp(new THREE.Color(0x6f86a6), 0.5 * (1 - night)).lerp(new THREE.Color(0x0a1028), 0.65 * night);
+    this.elSkyline.style.backgroundColor = '#' + sil.getHexString(); this.elSkyWin.style.opacity = clamp((night - 0.35) * 1.6, 0, 1).toFixed(2);
+    this.elStars.style.opacity = clamp((night - 0.5) * 2.2, 0, 1).toFixed(2);
+    document.body.classList.toggle('dark', night > 0.5);
   }
   resize() {
     const w = this.stage.clientWidth, h = this.stage.clientHeight; if (!w || !h) return;
@@ -751,7 +765,8 @@ class App {
     else if (e.kind === 'new') this.toast(`${e.name} vừa vào văn phòng`); else if (e.kind === 'left') this.toast(`${e.name} đã rời văn phòng`);
   }
   tickUI() {
-    const now = new Date(); $('#clock').textContent = fmtTime.format(now);
+    const now = new Date(); const cm = this.clock;
+    if (cm.mode === 'real') $('#clock').textContent = fmtTime.format(now); else { const h = cm.hour(); $('#clock').textContent = String(Math.floor(h)).padStart(2, '0') + ':' + String(Math.floor((h % 1) * 60)).padStart(2, '0') + cm.label; }
     const c = this.conn, dot = $('#dot'); let cls = '', tip = 'Kết nối tốt';
     if (c.err) { cls = 'err'; tip = 'Lỗi tải: ' + c.err; } else if (c.lastOk && Date.now() - c.lastOk > CONFIG.staleMs) { cls = 'stale'; tip = 'Dữ liệu cũ hơn 60 giây'; } else if (!c.lastOk) { cls = 'stale'; tip = 'Đang kết nối...'; }
     dot.className = cls; dot.title = tip;
@@ -775,6 +790,7 @@ class App {
   // ---------------------------------------------------------------- frame
   frame(now) {
     const dt = Math.min(0.1, (now - this.last) / 1000); this.last = now;
+    this.applyEnv(dt);
     for (const a of this.actors.values()) { if (a.celebrate > 0) a.celebrate -= dt; a.update(dt); }
     this.separate(dt);
     for (const s of this.venue.slots) {
@@ -805,7 +821,7 @@ class App {
       const m = Math.hypot(a.off.x, a.off.z); if (m > M) { a.off.x *= M / m; a.off.z *= M / m; }
     }
   }
-  labelOverlap() { const r = [...this.labels.values()].filter((l) => l.el.style.display !== 'none').map((l) => l.el.getBoundingClientRect()); let n = 0; for (let i = 0; i < r.length; i++) for (let j = i + 1; j < r.length; j++) if (r[i].left < r[j].right - 1 && r[i].right > r[j].left + 1 && r[i].top < r[j].bottom - 1 && r[i].bottom > r[j].top + 1) n++; return n; }
+  labelOverlap() { const r = [...this.labels.values()].filter((l) => l.el.style.display !== 'none' && !l.el.classList.contains('pop')).map((l) => l.el.getBoundingClientRect()); let n = 0; for (let i = 0; i < r.length; i++) for (let j = i + 1; j < r.length; j++) if (r[i].left < r[j].right - 1 && r[i].right > r[j].left + 1 && r[i].top < r[j].bottom - 1 && r[i].bottom > r[j].top + 1) n++; return n; }
   minGap() { const l = [...this.actors.values()].filter((a) => a.hold <= 0); let m = 1e9; for (let i = 0; i < l.length; i++) for (let j = i + 1; j < l.length; j++) m = Math.min(m, Math.hypot(l[i].root.position.x - l[j].root.position.x, l[i].root.position.z - l[j].root.position.z)); return m; }
   updateLabels() {
     const items = [], meetCount = [...this.actors.values()].filter((a) => a.at && a.at[0] === 'M' && !a.queue.length).length;
@@ -836,4 +852,4 @@ class App {
     }
   }
 }
-const app = new App(); window.__OFFICE = { app, get bots() { return Object.fromEntries([...app.actors].map(([id, a]) => [id, { state: a.d.state, task: a.d.task, x: a.root.position.x, z: a.root.position.z, at: a.at, dest: a.dest, moving: a.moving, seat: a.seat, queue: a.queue.length }])); }, poll: () => app.poll(), minGap: () => app.minGap(), labelOverlap: () => app.labelOverlap() };
+const app = new App(); window.__OFFICE = { app, get bots() { return Object.fromEntries([...app.actors].map(([id, a]) => [id, { state: a.d.state, task: a.d.task, x: a.root.position.x, z: a.root.position.z, at: a.at, dest: a.dest, moving: a.moving, seat: a.seat, queue: a.queue.length }])); }, poll: () => app.poll(), env: () => ({ hour: app.env.hour, lamp: app.env.lamp, cars: app.city.cars.length, moving: app.city.cars.filter((c) => c.v > 0.5).length }), minGap: () => app.minGap(), labelOverlap: () => app.labelOverlap() };
