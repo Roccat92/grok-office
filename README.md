@@ -78,7 +78,9 @@ Lưu ý: mỗi lần `--push` là một commit nên tốn thêm credit của bot
 }
 ```
 
-- `state`: `working` (gõ phím, màn hình sáng), `idle` (ngả lưng, thỉnh thoảng đi lấy cà phê), `meeting` (sang phòng họp ngồi), `blocked` (bong bóng đỏ `!`), `done` (ăn mừng rồi nghỉ).
+- `state`: `working` (gõ phím, màn hình sáng), `idle` (ngủ gục tại bàn riêng, có chữ Z z z bay lên, bong bóng "Đang ngủ zzz"), `meeting` (sang phòng họp ngồi), `blocked` (bong bóng đỏ `!`), `done` (ăn mừng rồi nghỉ, thỉnh thoảng ra góc cà phê - mỗi người một chỗ đứng riêng).
+
+Chống chồng chéo (tối đa 8 bot): mỗi bot một bàn riêng, 3 chỗ đứng riêng ở quầy cà phê, bot vào văn phòng lần lượt cách nhau ~1.4 giây, khi đi lại các nhân vật tự né nhau (khoảng cách tối thiểu 1.0), bong bóng tự xếp lệch/chồng lên cao để không đè nhau. Kiểm tra: `node tests/crowd.cjs` (8 bot, cần `node tests/serve.cjs` đang chạy).
 - `room`: `desk` hoặc `meeting`. Bot ở phòng họp khi `state` là `meeting`, khi `room` là `meeting`, hoặc khi là thành viên của một nhóm có `"active": true` (trừ khi đang `blocked`).
 - `progress` (tuỳ chọn, 0-100): thanh tiến độ trên màn hình, bong bóng và panel.
 - `log`: tối đa 5 dòng, dòng mới nhất ở cuối.

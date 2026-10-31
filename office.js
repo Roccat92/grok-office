@@ -8,7 +8,8 @@ const CONFIG = {
   office: { x0: -9, x1: 10, z0: -6, z1: 7, wallH: 3.4 },
   cam: { yawDeg: 45, pitchDeg: 35, focusZoom: 0.36 },
   desk: { cols: [-6.6, -3.8, -1.0, 1.8], rows: [-3.4, 0.9], laneA: -0.85, laneB: 3.2, laneX: 3.5 },
-  wander: { first: [5, 11], every: [16, 32], coffee: [6, 10] }
+  wander: { first: [5, 11], every: [16, 32], coffee: [6, 10] },
+  sep: { radius: 1.0, max: 0.75, spawnGap: 1.4 } // min distance between avatars, max sidestep, delay between entrances
 };
 const STATE = {
   working: { label: 'Đang làm', color: '#5ad07a' }, idle: { label: 'Rảnh', color: '#a7b2ac' }, meeting: { label: 'Họp', color: '#5aa9ff' },
@@ -73,6 +74,7 @@ function wrapText(ctx, text, maxW, maxLines) {
 
 // ================================================================ VENUE (island + office diorama)
 const O = CONFIG.office, D = CONFIG.desk;
+const COFFEE_Z = [4.3, 5.1, 5.9];
 const slotPos = (i) => { const col = i >> 1, row = i & 1; return { x: D.cols[col], z: D.rows[row], row }; };
 const MEET = { x: 7.6, z: -3.05 };
 const MEET_SEATS = (() => {
@@ -337,7 +339,10 @@ class Venue {
     // desks
     for (let i = 0; i < 8; i++) { const p = slotPos(i); node('S' + i, p.x, p.z + 1.0); edge('S' + i, (p.row ? 'XB' : 'XA') + (i >> 1)); }
     // coffee
-    node('CS', O.x0 + 1.9, 5.1); node('CL', O.x0 + 1.9, D.laneB); edge('CS', 'CL'); edge('CL', 'XB0');
+    // three distinct standing spots at the counter (CS0..2), each reached from its own approach node (CA0..2)
+    this.coffeeSpots = [];
+    COFFEE_Z.forEach((cz, k) => { node('CS' + k, O.x0 + 1.9, cz); node('CA' + k, O.x0 + 3.1, cz); edge('CS' + k, 'CA' + k); if (k) edge('CA' + k, 'CA' + (k - 1)); this.coffeeSpots.push({ node: 'CS' + k, owner: null }); });
+    edge('CA0', 'XB0');
     // meeting room
     node('DO', 5.7, 1.4); node('DI', 5.7, -0.85); edge('LM', 'DO'); edge('DO', 'DI');
     const south = ['DI'];
@@ -370,6 +375,14 @@ class Venue {
 // ================================================================ CHARACTER (chunky low-poly, procedural animation)
 const SKINS = [0xf0c6a0, 0xc98d62, 0x8d5a3b, 0xe8b88a], HAIRS = [0x4a2f1e, 0x20150e, 0xc9a24a, 0x7a3b22, 0x2a2a35];
 const SIT_DROP = 0.35, SIT_Y = 0.55;
+
+const ZV = new THREE.Vector3(), zCache = {};
+function zTex(ch) {
+  if (zCache[ch]) return zCache[ch];
+  const c = document.createElement('canvas'); c.width = c.height = 64; const x = c.getContext('2d');
+  x.font = 'italic 900 52px Georgia, serif'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.lineJoin = 'round'; x.lineWidth = 8; x.strokeStyle = '#2b4f8c'; x.strokeText(ch, 32, 36); x.fillStyle = '#ffffff'; x.fillText(ch, 32, 36);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return (zCache[ch] = t);
+}
 
 class Actor {
   constructor(data, venue, scene, slot, spawn, opts = {}) {
@@ -409,17 +422,18 @@ class Actor {
     this.P = { sit: 0, hip: 0, knee: 0, lean: 0, as: [0, 0], ae: [-0.1, -0.1], headX: 0, headY: 0 };
     this.queue = []; this.dest = null; this.at = null; this.celebrate = 0; this.seat = opts.seat ?? -1;
     this.coffee = false; this.coffeeT = 0; this.wanderT = rr(...CONFIG.wander.first);
-    this.wantMeeting = !!opts.meeting; this.moving = false;
+    this.wantMeeting = !!opts.meeting; this.moving = false; this.coffeeNode = null; this.off = { x: 0, z: 0 }; this.hold = opts.hold || 0; this.zA = 0; this.lx = 0; this.lz = 0;
+    this.makeZz();
     const first = this.targetNode(this.wantDestination());
     if (spawn) { this.at = venue.spawn; this.place(venue.spawn); this.dest = null; this.setDest(this.wantDestination()); }
     else { this.at = first; this.place(first); this.dest = this.wantDestination(); this.snapYaw(); }
     this.applyColor(data);
   }
-  place(nodeName) { const n = this.venue.nodes[nodeName]; this.root.position.x = n.x; this.root.position.z = n.z; }
+  place(nodeName) { const n = this.venue.nodes[nodeName]; this.lx = n.x; this.lz = n.z; this.root.position.set(n.x, 0, n.z); }
   applyColor() { this.slot.accentMat.color.set(this.d.color); this.slot.glowMat.color.set(this.d.color); }
   wantDestination() { return this.coffee ? 'coffee' : (this.wantMeeting && this.seat >= 0 ? 'meeting' : 'desk'); }
-  targetNode(dest) { return dest === 'coffee' ? 'CS' : dest === 'meeting' ? 'M' + this.seat : 'S' + this.slot.i; }
-  seatYaw(node) { if (node === 'CS') return -Math.PI / 2; if (node[0] === 'M') return MEET_SEATS[+node.slice(1)].yaw; return Math.PI; }
+  targetNode(dest) { return dest === 'coffee' && this.coffeeNode ? this.coffeeNode : dest === 'meeting' ? 'M' + this.seat : 'S' + this.slot.i; }
+  seatYaw(node) { if (node.startsWith('CS')) return -Math.PI / 2; if (node[0] === 'M') return MEET_SEATS[+node.slice(1)].yaw; return Math.PI; }
   snapYaw() { this.yaw = this.targetYaw = this.seatYaw(this.at); this.root.rotation.y = this.yaw; }
   setDest(dest) {
     this.dest = dest; const target = this.targetNode(dest);
@@ -431,31 +445,56 @@ class Actor {
   }
   arrive() { this.targetYaw = this.seatYaw(this.at); }
   get sitting() { return !this.queue.length && (this.at[0] === 'S' || this.at[0] === 'M'); }
-  get standingCoffee() { return !this.queue.length && this.at === 'CS'; }
-  restState() { return this.d.state === 'idle' || this.d.state === 'done'; }
+  get standingCoffee() { return !this.queue.length && this.at.startsWith('CS'); }
+  get free() { return !this.sitting; }   // walking or standing around (not parked on a chair)
+  get sleeping() { return this.d.state === 'idle' && !this.wantMeeting && this.sitting && this.at[0] === 'S' && this.celebrate <= 0; }
+  claimCoffee() { const sp = this.venue.coffeeSpots.find((q) => !q.owner); if (!sp) return false; sp.owner = this.id; this.coffeeNode = sp.node; return true; }
+  releaseCoffee() { const sp = this.venue.coffeeSpots.find((q) => q.owner === this.id); if (sp) sp.owner = null; this.coffeeNode = null; }
+  restState() { return this.d.state === 'done'; }   // idle bots sleep at their own desk; only 'done' bots wander off for coffee
 
   update(dt, ctx) {
+    if (this.hold > 0) { this.hold -= dt; this.root.visible = false; this.zUpdate(dt); return; }   // staggered entrance
+    this.root.visible = true;
     this.t += dt; const d = this.d;
-    // wander logic (coffee runs) only for resting bots
-    if (!this.restState() && this.coffee) { this.coffee = false; }
+    // wander logic (coffee runs): only 'done' bots, and only if a coffee spot of their own is free
+    if (!this.restState() && this.coffee) { this.coffee = false; this.releaseCoffee(); }
     if (this.restState() && !this.wantMeeting) {
-      if (!this.coffee && this.sitting && this.dest === 'desk') { this.wanderT -= dt; if (this.wanderT <= 0) { this.coffee = true; this.coffeeT = rr(...CONFIG.wander.coffee); } }
-      if (this.coffee && this.standingCoffee) { this.coffeeT -= dt; if (this.coffeeT <= 0) { this.coffee = false; this.wanderT = rr(...CONFIG.wander.every); } }
+      if (!this.coffee && this.sitting && this.dest === 'desk') { this.wanderT -= dt; if (this.wanderT <= 0) { if (this.claimCoffee()) { this.coffee = true; this.coffeeT = rr(...CONFIG.wander.coffee); } else this.wanderT = rr(3, 6); } }
+      if (this.coffee && this.standingCoffee) { this.coffeeT -= dt; if (this.coffeeT <= 0) { this.coffee = false; this.releaseCoffee(); this.wanderT = rr(...CONFIG.wander.every); } }
     }
-    if (this.wantMeeting && this.coffee) this.coffee = false;
+    if (this.wantMeeting && this.coffee) { this.coffee = false; this.releaseCoffee(); }
     const want = this.wantDestination(); if (want !== this.dest || (want === 'meeting' && this.dest === 'meeting' && this.targetNode('meeting') !== this.lastTarget)) { this.setDest(want); }
     this.lastTarget = this.targetNode(this.dest);
-    // movement
-    const r = this.root.position; this.moving = this.queue.length > 0;
+    // movement (logical position follows the node graph; render position adds the avoidance sidestep)
+    this.moving = this.queue.length > 0;
     if (this.moving) {
-      const n = this.venue.nodes[this.queue[0]], dx = n.x - r.x, dz = n.z - r.z, dist = Math.hypot(dx, dz), step = CONFIG.walkSpeed * dt;
-      if (dist <= step) { r.x = n.x; r.z = n.z; this.at = this.queue.shift(); if (!this.queue.length) { this.arrive(); if (this.at === 'CS') this.mug.visible = true; if (this.at[0] === 'S') this.mug.visible = false; } }
-      else { r.x += dx / dist * step; r.z += dz / dist * step; this.targetYaw = Math.atan2(dx, dz); this.phase += dt * 9.5; }
+      const n = this.venue.nodes[this.queue[0]], dx = n.x - this.lx, dz = n.z - this.lz, dist = Math.hypot(dx, dz), step = CONFIG.walkSpeed * dt;
+      if (dist <= step) { this.lx = n.x; this.lz = n.z; this.at = this.queue.shift(); if (!this.queue.length) { this.arrive(); if (this.at.startsWith('CS')) this.mug.visible = true; if (this.at[0] === 'S') this.mug.visible = false; } }
+      else { this.lx += dx / dist * step; this.lz += dz / dist * step; this.targetYaw = Math.atan2(dx, dz); this.phase += dt * 9.5; }
     }
+    if (this.sitting) { const k = Math.min(1, dt * 8); this.off.x -= this.off.x * k; this.off.z -= this.off.z * k; }
+    this.root.position.set(this.lx + this.off.x, 0, this.lz + this.off.z);
     this.walkAmt += ((this.moving ? 1 : 0) - this.walkAmt) * Math.min(1, dt * 8);
     let dy = this.targetYaw - this.yaw; dy = ((dy + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
     this.yaw += dy * Math.min(1, dt * (this.moving ? 10 : 6)); this.root.rotation.y = this.yaw;
-    this.pose(dt);
+    this.pose(dt); this.zUpdate(dt);
+  }
+  // ---- sleeping "Z z z" particles (looping sprites rising from the head)
+  makeZz() {
+    this.zz = [0, 1, 2].map((i) => {
+      const m = new THREE.SpriteMaterial({ map: zTex(i === 1 ? 'z' : 'Z'), transparent: true, opacity: 0, depthWrite: false, depthTest: false });
+      const sp = new THREE.Sprite(m); sp.visible = false; sp.renderOrder = 20; this.scene.add(sp); return sp;
+    });
+  }
+  zUpdate(dt) {
+    const on = this.hold <= 0 && this.sleeping ? 1 : 0; this.zA += (on - this.zA) * Math.min(1, dt * 4);
+    const show = this.zA > 0.02; this.head.getWorldPosition(ZV); const R = CONFIG.cam.yawDeg * Math.PI / 180, rx = Math.cos(R), rz = -Math.sin(R);
+    this.zz.forEach((sp, i) => {
+      sp.visible = show; if (!show) return;
+      const p = (this.t * 0.4 + i / 3 + this.ph * 0.1) % 1, side = 0.55 + p * 0.95 + Math.sin(p * 7 + i * 2) * 0.08;
+      sp.position.set(ZV.x + rx * side, ZV.y + 0.2 + p * 1.0, ZV.z + rz * side);
+      const sc = 0.22 + p * 0.3; sp.scale.set(sc, sc, 1); sp.material.opacity = Math.sin(Math.PI * Math.min(1, p * 1.05)) * 0.95 * this.zA; sp.material.rotation = Math.sin(p * 5 + i) * 0.25;
+    });
   }
   pose(dt) {
     const d = this.d, t = this.t, ph = this.ph, P = this.P;
@@ -478,7 +517,10 @@ class Actor {
         const nod = Math.max(0, Math.sin(t * 0.9 + ph * 2) - 0.6) * 0.5; T.headX += nod * 0.5; T.headY = Math.max(0, Math.sin(t * 0.37 + ph) - 0.8) * 1.2 * Math.sign(Math.sin(t * 0.11 + ph));
       } else if (d.state === 'blocked') {
         T.lean = 0.3; T.as = [-2.1, -2.1]; T.ae = [-2.3, -2.3]; T.headX = 0.35; T.headY = Math.sin(t * 3.5) * 0.18;
-      } else { // idle / done: lean back, hands behind head
+      } else if (d.state === 'idle') { // asleep: slumped forward, head resting on folded arms on the desk
+        const br = Math.sin(t * 1.3 + ph);
+        T.lean = 0.78 + br * 0.015; T.as = [-1.55, -1.55]; T.ae = [-0.15, -0.15]; T.headX = 0.62 + br * 0.02; T.headY = 0.55; T.sit = SIT_DROP - 0.04;
+      } else { // done: lean back, hands behind head
         T.lean = -0.22 + Math.sin(t * 0.7 + ph) * 0.03; T.as = [-2.6, -2.6]; T.ae = [-1.7, -1.7]; T.headX = -0.12; T.headY = Math.sin(t * 0.3 + ph) * 0.35;
       }
     } else if (this.standingCoffee) {
@@ -507,7 +549,7 @@ class Actor {
   }
   coffeeCarry() { return true; }
   headWorld(out) { this.head.getWorldPosition(out); return out; }
-  dispose() { this.scene.remove(this.root); }
+  dispose() { this.releaseCoffee(); this.scene.remove(this.root); this.zz.forEach((sp) => { this.scene.remove(sp); sp.material.dispose(); }); }
 }
 
 // ================================================================ CAMERA RIG (orthographic isometric, focus on a bot)
@@ -619,6 +661,7 @@ class App {
     const activeGroups = new Set(data.groups.filter((g) => g.active).map((g) => g.id)), inActive = new Set();
     for (const g of data.groups) if (g.active) g.members.forEach((m) => inActive.add(m));
     this.activeGroups = activeGroups;
+    this.spawnN = 0;
     for (const b of data.bots) {
       const old = pm.get(b.id); let a = this.actors.get(b.id);
       const wantM = (b.state === 'meeting' || b.room === 'meeting' || inActive.has(b.id)) && b.state !== 'blocked';
@@ -626,7 +669,8 @@ class App {
         const si = this.venue.slots.findIndex((s) => !s.bot); if (si < 0) continue;
         const slot = this.venue.slots[si]; slot.bot = b.id;
         let seat = -1; if (wantM) { seat = this.meetSeats.indexOf(null); if (seat >= 0) this.meetSeats[seat] = b.id; }
-        a = new Actor(b, this.venue, this.scene, slot, !first, { meeting: wantM && seat >= 0, seat });
+        const hold = first ? 0 : (this.spawnN = (this.spawnN || 0) + 1) * CONFIG.sep.spawnGap;
+        a = new Actor(b, this.venue, this.scene, slot, !first, { meeting: wantM && seat >= 0, seat, hold });
         this.actors.set(b.id, a); this.makeLabel(b); if (!first) events.push({ id: b.id, kind: 'new', name: b.name });
       } else {
         if (old && old.state !== b.state) { events.push({ id: b.id, kind: 'state', name: b.name, from: old.state, to: b.state }); if (b.state === 'done') a.celebrate = 3.2; }
@@ -651,17 +695,17 @@ class App {
   removeActor(id) {
     const a = this.actors.get(id); if (!a) return; a.slot.bot = null; a.slot.drawnKey = ''; a.slot.glowMat.opacity = 0; this.venue.drawScreen(a.slot, null);
     const si = this.meetSeats.indexOf(id); if (si >= 0) this.meetSeats[si] = null;
-    a.dispose(); this.actors.delete(id); const l = this.labels.get(id); if (l) { l.el.remove(); this.labels.delete(id); } if (this.selected === id) this.select(null);
+    a.dispose(); this.actors.delete(id); const l = this.labels.get(id); if (l) { l.el.remove(); if (l.ld) l.ld.remove(); this.labels.delete(id); } if (this.selected === id) this.select(null);
   }
   // ---------------------------------------------------------------- DOM: labels, panel, detail
   makeLabel(b) {
     const el = document.createElement('div'); el.className = 'bub'; el.innerHTML = '<b></b><span></span><div class="ico"></div>';
     el.addEventListener('click', (e) => { e.stopPropagation(); this.select(this.selected === b.id ? null : b.id); }); el.style.pointerEvents = 'auto';
-    $('#labels').appendChild(el); this.labels.set(b.id, { el, w: 120, h: 40, x: 0, y: 0 }); this.updateLabelText(b.id);
+    $('#labels').appendChild(el); const ld = document.createElementNS('http://www.w3.org/2000/svg', 'line'); $('#leaders').appendChild(ld); this.labels.set(b.id, { el, ld, w: 120, h: 40, x: 0, y: 0 }); this.updateLabelText(b.id);
   }
   updateLabelText(id) {
     const l = this.labels.get(id), a = this.actors.get(id); if (!l || !a) return; const b = a.d, el = l.el;
-    el.style.setProperty('--bc', b.color); el.querySelector('b').textContent = b.name; el.querySelector('span').textContent = b.task || STATE[b.state].label;
+    el.style.setProperty('--bc', b.color); el.querySelector('b').textContent = b.name; el.querySelector('span').textContent = b.state === 'idle' ? 'Đang ngủ zzz' : (b.task || STATE[b.state].label);
     el.querySelector('.ico').textContent = b.state === 'blocked' ? '!' : b.state === 'done' ? '\u2713' : '';
     el.classList.toggle('blocked', b.state === 'blocked'); el.classList.toggle('done', b.state === 'done');
     l.w = el.offsetWidth; l.h = el.offsetHeight;
@@ -732,6 +776,7 @@ class App {
   frame(now) {
     const dt = Math.min(0.1, (now - this.last) / 1000); this.last = now;
     for (const a of this.actors.values()) { if (a.celebrate > 0) a.celebrate -= dt; a.update(dt); }
+    this.separate(dt);
     for (const s of this.venue.slots) {
       const a = s.bot && this.actors.get(s.bot), t = now / 1000; let op = 0, br = 0.35;
       if (a) { const st = a.d.state; br = st === 'working' ? 0.92 + Math.sin(t * 3) * 0.08 : st === 'blocked' ? 0.7 + Math.sin(t * 9) * 0.3 : 0.5;
@@ -741,22 +786,54 @@ class App {
     this.rig.update(dt, this.tmp); this.renderer.render(this.scene, this.rig.cam); this.updateLabels();
     requestAnimationFrame((t) => this.frame(t));
   }
+  // keep avatars from standing on top of each other while walking or hanging around: push free actors apart (seated ones act as fixed obstacles)
+  separate(dt) {
+    const R = CONFIG.sep.radius, list = [...this.actors.values()].filter((a) => a.hold <= 0);
+    for (const a of list) {
+      if (!a.free) continue;
+      let fx = 0, fz = 0;
+      for (const o of list) {
+        if (o === a) continue;
+        let dx = a.root.position.x - o.root.position.x, dz = a.root.position.z - o.root.position.z, dist = Math.hypot(dx, dz);
+        if (dist >= R) continue;
+        if (dist < 0.02) { const ang = (hash(a.id) % 628) / 100; dx = Math.cos(ang); dz = Math.sin(ang); dist = 1e-3; } else { dx /= dist; dz /= dist; }
+        const w = (R - dist) * (o.free ? 0.5 : 1);   // two walkers share the correction, a seated one does not move
+        fx += dx * w; fz += dz * w;
+      }
+      const k = Math.min(1, dt * 7), M = CONFIG.sep.max;
+      if (fx || fz) { a.off.x += fx * k * 2.2; a.off.z += fz * k * 2.2; } else { const d = Math.min(1, dt * 1.5); a.off.x -= a.off.x * d; a.off.z -= a.off.z * d; }
+      const m = Math.hypot(a.off.x, a.off.z); if (m > M) { a.off.x *= M / m; a.off.z *= M / m; }
+    }
+  }
+  labelOverlap() { const r = [...this.labels.values()].filter((l) => l.el.style.display !== 'none').map((l) => l.el.getBoundingClientRect()); let n = 0; for (let i = 0; i < r.length; i++) for (let j = i + 1; j < r.length; j++) if (r[i].left < r[j].right - 1 && r[i].right > r[j].left + 1 && r[i].top < r[j].bottom - 1 && r[i].bottom > r[j].top + 1) n++; return n; }
+  minGap() { const l = [...this.actors.values()].filter((a) => a.hold <= 0); let m = 1e9; for (let i = 0; i < l.length; i++) for (let j = i + 1; j < l.length; j++) m = Math.min(m, Math.hypot(l[i].root.position.x - l[j].root.position.x, l[i].root.position.z - l[j].root.position.z)); return m; }
   updateLabels() {
     const items = [], meetCount = [...this.actors.values()].filter((a) => a.at && a.at[0] === 'M' && !a.queue.length).length;
     for (const [id, l] of this.labels) {
-      const a = this.actors.get(id); if (!a) continue; a.headWorld(this.tmp2); this.tmp2.y += 0.55; this.tmp2.project(this.rig.cam);
+      const a = this.actors.get(id); if (!a) continue; const vis = a.hold <= 0; l.el.style.display = vis ? '' : 'none'; if (l.ld) l.ld.style.display = vis ? '' : 'none'; if (!vis) continue;
+      a.headWorld(this.tmp2); this.tmp2.y += 0.55 + 0.35 * a.zA; this.tmp2.project(this.rig.cam);   // sleepers: bubble a bit higher, Zzz drift off to its right
       const x = (this.tmp2.x * 0.5 + 0.5) * this.W, y = (-this.tmp2.y * 0.5 + 0.5) * this.H;
       const compact = meetCount > 2 && a.at[0] === 'M' && this.selected !== id; l.el.classList.toggle('compact', compact);
       if (compact) { l.w = l.el.offsetWidth; l.h = l.el.offsetHeight; }
       items.push({ id, l, x, y: y - 8 });
     }
-    items.sort((p, q) => q.y - p.y); const placed = [];
+    // greedy placement: nearest free slot (sideways or stacked upwards) around each bot's head, front-most bot first
+    items.sort((p, q) => q.y - p.y); const placed = [], G = 4;
+    const hit = (L, T, w, h) => placed.some((p) => L < p.x + p.w + 2 && L + w > p.x - 2 && T < p.y + p.h + 2 && T + h > p.y - 2);
+    const spot = (it, dxk, dy) => ({ dxk, dy, L: clamp(it.x - it.l.w / 2 + dxk * (it.l.w + G), 4, this.W - it.l.w - 4), T: Math.max(4, it.y - it.l.h - dy * (it.l.h + G)) });
     for (const it of items) {
-      let top = Math.max(4, it.y - it.l.h), left = it.x - it.l.w / 2; left = clamp(left, 4, this.W - it.l.w - 4);
-      for (let k = 0; k < 6; k++) { const hitp = placed.find((p) => left < p.x + p.w && left + it.l.w > p.x && top < p.y + p.h && top + it.l.h > p.y); if (!hitp) break; top = hitp.y - it.l.h - 4; }
-      placed.push({ x: left, y: top, w: it.l.w, h: it.l.h });
-      it.l.el.style.transform = `translate(${left.toFixed(1)}px,${top.toFixed(1)}px)`;
+      const w = it.l.w, h = it.l.h, l = it.l; let best = null;
+      const prev = l.slot && spot(it, l.slot.dxk, l.slot.dy);                       // hysteresis: keep last slot while it stays free (no flicker, no jumping)
+      if (prev && !hit(prev.L, prev.T, w, h)) best = prev;
+      else for (const dy of [0, 1, 2, 3, 4, 5, 6]) for (const dxk of [0, 1, -1, 2, -2, 3, -3, 4, -4]) {
+        const c = spot(it, dxk, dy), cost = Math.abs(dxk) * 0.7 + dy + (hit(c.L, c.T, w, h) ? 100 : 0); if (!best || cost < best.cost) best = { ...c, cost };
+      }
+      l.slot = { dxk: best.dxk, dy: best.dy }; placed.push({ x: best.L, y: best.T, w, h });
+      l.px = best.L; l.py = best.T;
+      l.el.style.transform = `translate(${l.px.toFixed(1)}px,${l.py.toFixed(1)}px)`;
+      const tx = clamp(it.x - l.px, 12, w - 12); l.el.style.setProperty('--tx', tx.toFixed(1) + 'px');
+      if (l.ld) { const displaced = Math.abs(it.x - (l.px + w / 2)) > w * 0.3 || l.py + h < it.y - 14; l.ld.setAttribute('x1', (l.px + tx).toFixed(1)); l.ld.setAttribute('y1', (l.py + h + 5).toFixed(1)); l.ld.setAttribute('x2', it.x.toFixed(1)); l.ld.setAttribute('y2', (it.y + 6).toFixed(1)); l.ld.style.opacity = displaced ? 1 : 0; }
     }
   }
 }
-const app = new App(); window.__OFFICE = { app, get bots() { return Object.fromEntries([...app.actors].map(([id, a]) => [id, { state: a.d.state, task: a.d.task, x: a.root.position.x, z: a.root.position.z, at: a.at, dest: a.dest, moving: a.moving, seat: a.seat, queue: a.queue.length }])); }, poll: () => app.poll() };
+const app = new App(); window.__OFFICE = { app, get bots() { return Object.fromEntries([...app.actors].map(([id, a]) => [id, { state: a.d.state, task: a.d.task, x: a.root.position.x, z: a.root.position.z, at: a.at, dest: a.dest, moving: a.moving, seat: a.seat, queue: a.queue.length }])); }, poll: () => app.poll(), minGap: () => app.minGap(), labelOverlap: () => app.labelOverlap() };

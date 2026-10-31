@@ -20,7 +20,7 @@ const F = '/workspace/grok-office/status.json', orig = fs.readFileSync(F, 'utf8'
     await p.waitForFunction(() => window.__OFFICE.bots.devhub.state === 'meeting', { timeout: 15000, polling: 200 });
     const dt = (Date.now() - t0) / 1000; ok('change picked up within 12s (took ' + dt.toFixed(1) + 's)', dt <= 12.5, dt);
     const bl = await p.evaluate(() => ({ b: window.__OFFICE.bots, toast: [...document.querySelectorAll('.toast')].map(e => e.textContent), blocked: document.querySelector('.bub.blocked b')?.textContent, ev: window.__lastEvents }));
-    ok('nexa blocked + bubble flagged', bl.b.nexa.state === 'blocked' && bl.blocked === 'NEXA', bl);
+    ok('nexa blocked + bubble flagged', bl.b.nexa.state === 'blocked' && (bl.blocked || '').startsWith('NEXA'), bl);
     ok('toast shown', bl.toast.length >= 1, bl.toast);
     await p.waitForTimeout(2500);
     const b1 = await p.evaluate(() => window.__OFFICE.bots);
