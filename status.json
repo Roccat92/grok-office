@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-11-01T00:45:00+07:00",
+  "updatedAt": "2026-10-31T17:52:59.735Z",
   "bots": [
     {
       "id": "nexa",
@@ -13,8 +13,18 @@
       "room": "desk",
       "since": "2026-11-01T00:36:00+07:00",
       "log": [
-        { "t": "2026-11-01T00:29:00+07:00", "msg": "Đã build xong game và đăng lên roccat92.github.io/kitchen-rally" },
-        { "t": "2026-11-01T00:36:00+07:00", "msg": "Bắt đầu sửa cơ chế di chuyển: tăng tốc chạy, nới vùng với bóng" }
+        {
+          "t": "2026-11-01T00:29:00+07:00",
+          "msg": "Đã build xong game và đăng lên roccat92.github.io/kitchen-rally"
+        },
+        {
+          "t": "2026-11-01T00:36:00+07:00",
+          "msg": "Bắt đầu sửa cơ chế di chuyển: tăng tốc chạy, nới vùng với bóng"
+        },
+        {
+          "t": "2026-10-31T17:52:59.735Z",
+          "msg": "Dựng xong Grok Office (repo grok-office) để theo dõi các bot"
+        }
       ]
     },
     {
@@ -58,7 +68,10 @@
     {
       "id": "game-casual-pixel",
       "name": "Game casual pixel",
-      "members": ["nexa", "devhub"],
+      "members": [
+        "nexa",
+        "devhub"
+      ],
       "topic": "Kitchen Rally pickleball"
     }
   ]
