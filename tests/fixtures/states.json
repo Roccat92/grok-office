@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "updatedAt": "2026-11-01T00:45:00+07:00",
+  "bots": [
+    {
+      "id": "nexa",
+      "name": "NEXA",
+      "role": "Dev chính",
+      "color": "#d94a3d",
+      "state": "blocked",
+      "task": "Chờ xác nhận cảm giác di chuyển",
+      "project": "kitchen-rally",
+      "room": "desk",
+      "since": "2026-11-01T00:36:00+07:00",
+      "log": [
+        {
+          "t": "2026-11-01T00:29:00+07:00",
+          "msg": "Đã build xong game và đăng lên roccat92.github.io/kitchen-rally"
+        },
+        {
+          "t": "2026-11-01T00:36:00+07:00",
+          "msg": "Bắt đầu sửa cơ chế di chuyển: tăng tốc chạy, nới vùng với bóng"
+        }
+      ],
+      "progress": 60
+    },
+    {
+      "id": "devhub",
+      "name": "Grok CLI DevHub",
+      "role": "Trung tâm Grok CLI",
+      "color": "#3e8ce6",
+      "state": "meeting",
+      "task": "Họp nhóm game casual pixel",
+      "project": "",
+      "room": "meeting",
+      "since": "2026-11-01T00:45:00+07:00",
+      "log": []
+    },
+    {
+      "id": "grokbot",
+      "name": "Grok Bot",
+      "role": "Bot chính, điều phối",
+      "color": "#f2b134",
+      "state": "done",
+      "task": "Đã giao việc xong",
+      "project": "",
+      "room": "desk",
+      "since": "2026-11-01T00:45:00+07:00",
+      "log": []
+    },
+    {
+      "id": "email-startee",
+      "name": "Email Marketing Startee",
+      "role": "Email marketing",
+      "color": "#9a5bd6",
+      "state": "working",
+      "task": "Soạn chuỗi email chào mừng",
+      "project": "",
+      "room": "desk",
+      "since": "2026-11-01T00:45:00+07:00",
+      "log": [],
+      "progress": 35
+    },
+    {
+      "id": "extra",
+      "name": "Kaede",
+      "role": "Test",
+      "color": "#2fb59a",
+      "state": "meeting",
+      "task": "Họp thử",
+      "project": "",
+      "room": "meeting",
+      "since": "2026-11-01T00:45:00+07:00",
+      "log": []
+    }
+  ],
+  "groups": [
+    {
+      "id": "game-casual-pixel",
+      "name": "Game casual pixel",
+      "members": [
+        "nexa",
+        "devhub"
+      ],
+      "topic": "Kitchen Rally pickleball",
+      "active": true
+    }
+  ]
+}
