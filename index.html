@@ -39,6 +39,9 @@
   #hud { position:absolute; left:50%; top:10px; transform:translateX(-50%); display:flex; align-items:center; gap:14px; padding:7px 14px; font-size:clamp(11px,1.2vw,13px); white-space:nowrap; z-index:3; }
   #hud .sep { width:1px; height:16px; background:var(--color-line); }
   #hud b { font-family:var(--font-mono); font-size:clamp(13px,1.5vw,17px); letter-spacing:.5px; color:var(--color-accent); font-weight:700; }
+  #dhstat::before { content:''; display:inline-block; width:8px; height:8px; margin-right:6px; background:var(--color-accent); transform:rotate(45deg); vertical-align:0; }
+  #dhstat.warn { color:var(--color-warn); } #dhstat.err { color:var(--color-err); } #dhstat.ok { color:var(--color-accent); }
+  .chip.dh { background:var(--color-accent); color:#080B0B; font-weight:700; padding:0 6px; margin-right:4px; }
   #dot { width:11px; height:11px; border-radius:50%; background:var(--color-ok); box-shadow:0 0 8px currentColor; color:var(--color-ok); display:inline-block; vertical-align:-1px; margin-right:6px; }
   #dot.stale { background:var(--color-warn); color:var(--color-warn); } #dot.err { background:var(--color-err); color:var(--color-err); }
   #zoomctl { position:absolute; right:12px; top:12px; display:flex; gap:6px; align-items:center; z-index:3; }
@@ -137,6 +140,7 @@
     <span><span class="hide-m">Giờ Bangkok </span><b id="clock">--:--:--</b></span><span class="sep"></span>
     <span><i id="dot" title="Đang kết nối..."></i><span id="upd">Cập nhật lúc --:--:--</span></span>
     <span class="sep hide-m"></span><span class="hide-m" id="dataAge"></span>
+    <span class="sep hide-m"></span><span class="hide-m" id="dhstat"></span>
   </div>
   <div id="zoomctl"><button id="zin" class="btn panel" aria-label="Phóng to" title="Phóng to">+</button><button id="zout" class="btn panel" aria-label="Thu nhỏ" title="Thu nhỏ">&minus;</button><button id="overview" class="btn primary" title="Về toàn cảnh (nhấp đúp vào cảnh cũng được)">TOÀN CẢNH</button></div>
   <div id="legend" class="panel">

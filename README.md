@@ -6,6 +6,39 @@ Văn phòng 3D là một tầng của tòa nhà cao tầng giữa thành phố (
 - Không cần build. Tĩnh hoàn toàn: `index.html`, `office.js`, `status.json`.
 - Three.js r160 tải từ CDN unpkg (giống Kitchen Rally).
 
+## Nối với DevHub (agent Claude Code, Codex, Grok Build, Grok API, OpenRouter)
+
+Office có 10 bàn: 5 cho Grok Bot và 5 cho các agent có sẵn trong [nexa-devhub](https://github.com/Roccat92/nexa-devhub) (id trong DevHub: `claude`, `codex`, `grok-build`, `grok`, `openrouter`). Agent DevHub có ăng-ten vàng, kính che mắt và huy hiệu ở ngực, hiện chip `DevHub` trong danh sách. Trạng thái lấy từ DevHub, nếu không có thì vẫn chạy bằng `status.json`.
+
+```
+daemon DevHub --(script chỉ-đọc trên máy host)--> devhub-status.json  --> Office (poll 10 giây)
+```
+
+Daemon DevHub bắt đăng nhập và chạy trên máy của bạn, còn GitHub Pages là trang tĩnh, nên giữa hai bên cần bộ xuất `scripts/export-office-status.mjs` (nằm trong nexa-devhub, nhánh `feat/grok-office-export`, xem `docs/GROK-OFFICE.md` ở đó). Có hai cách nối:
+
+| Cách | Lệnh trên máy host DevHub | Office đọc từ |
+| --- | --- | --- |
+| A. Đẩy lên repo | `node scripts/export-office-status.mjs --watch 20 --push D:\grok-office` (đặt `NEXA_CODE` trước) | `./devhub-status.json` (mặc định, không cần tham số) |
+| B. Trực tiếp | `node scripts/export-office-status.mjs --serve 4318` | thêm `?devhub=http://127.0.0.1:4318/office-status.json` vào URL (qua Tailscale: dùng URL https của `tailscale serve`) |
+
+Tham số URL: `?devhub=URL` đổi nguồn, `?devhub=off` tắt hẳn, `?dhstale=SỐ_GIÂY` đổi ngưỡng coi dữ liệu là cũ (mặc định 300).
+
+Quy tắc hiển thị (thanh trên cùng có chip `DevHub: ...` cho biết đang ở trạng thái nào):
+
+| DevHub báo | Office | Chip trên cùng |
+| --- | --- | --- |
+| task đang chạy (`running`) | Ngồi gõ phím, hiện tên task và dự án | `trực tiếp` |
+| chờ bạn duyệt (`waiting`) | Bị chặn `!`, "Chờ duyệt: ..." | `trực tiếp` |
+| rảnh (`available`) | Ngủ zzz. Task vừa xong dưới 3 phút thì ăn mừng "Xong", vừa lỗi thì `!` | `trực tiếp` |
+| chưa cài / chưa đăng nhập / tắt | Ngủ zzz kèm lý do | `trực tiếp` |
+| `generatedAt` quá cũ | Tất cả ngủ zzz, "DevHub chưa gửi dữ liệu mới" | `dữ liệu cũ` |
+| không tải được nguồn | Giữ danh sách cũ, tất cả ngủ zzz, "Mất kết nối DevHub" | `mất kết nối` |
+| chưa từng tải được | Dùng các bot `dh-*` có trong `status.json` (cập nhật bằng `update-status.mjs --bot dh-claude ...`) | `dùng status.json` |
+
+File `devhub-status.json` trong repo hiện chỉ là danh sách agent (state `unknown`, không bịa dữ liệu): 5 bàn DevHub ngủ với dòng "Chưa có dữ liệu từ DevHub" cho tới khi bộ xuất ghi đè file này. Định dạng đầy đủ: `schema: "devhub-office/1"`, xem `docs/GROK-OFFICE.md` trong nexa-devhub.
+
+Kiểm thử: `node tests/serve.cjs 8123 &` rồi `node tests/devhub.cjs` (22 kiểm tra), cùng `crowd.cjs`, `dyn.cjs`, `daynight.cjs`, `zoom.cjs`. Ảnh: `shots/devhub-office.png`, `shots/devhub-desks.png`.
+
 ## Dữ liệu: mức 2 (bán thực)
 
 Trang đọc `./status.json` mỗi 10 giây (có tham số chống cache), so sánh với lần trước rồi chạy hoạt ảnh cho phần thay đổi: bot đi bộ sang phòng họp, ngồi gõ phím, hiện dấu `!` khi bị chặn, ăn mừng khi xong việc.

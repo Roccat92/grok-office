@@ -1,0 +1,13 @@
+{
+  "schema": "devhub-office/1",
+  "generatedAt": null,
+  "source": "roster-placeholder",
+  "note": "Danh sách agent có sẵn trong DevHub. Chưa có dữ liệu thật: chạy nexa-devhub/scripts/export-office-status.mjs --push để ghi đè file này.",
+  "agents": [
+    { "id": "claude", "name": "Claude Code", "kind": "local_cli", "enabled": true, "state": "unknown" },
+    { "id": "codex", "name": "Codex", "kind": "local_sdk", "enabled": true, "state": "unknown" },
+    { "id": "grok-build", "name": "Grok Build (CLI)", "kind": "local_cli", "enabled": true, "state": "unknown" },
+    { "id": "grok", "name": "Grok API", "kind": "model_api", "enabled": true, "state": "unknown" },
+    { "id": "openrouter", "name": "OpenRouter", "kind": "model_api", "enabled": true, "state": "unknown" }
+  ]
+}

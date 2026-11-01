@@ -8,7 +8,7 @@ const mk = (id, state, extra = {}) => ({ id, name: id.toUpperCase(), role: 'x', 
   const one = [mk('nexa', 'working')];
   const all = [mk('nexa', 'working'), mk('devhub', 'idle'), mk('grokbot', 'idle'), mk('email-startee', 'idle'), mk('docs-writer', 'idle'), mk('d1', 'done'), mk('d2', 'done'), mk('d3', 'working')];
   await p.route('**/status.json*', r => r.fulfill({ contentType: 'application/json', body: JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), bots: phase === 1 ? one : all, groups: [] }) }));
-  await p.goto('http://localhost:8123/index.html?interval=2'); await p.waitForFunction(() => window.__OFFICE && window.__OFFICE.app.data, { timeout: 60000 });
+  await p.goto('http://localhost:8123/index.html?interval=2&devhub=off'); await p.waitForFunction(() => window.__OFFICE && window.__OFFICE.app.data, { timeout: 60000 });
   await p.waitForTimeout(1500); phase = 2; const t0 = Date.now(); let minGap = 1e9, maxOv = 0, samples = 0, shotDone = false;
   while (Date.now() - t0 < dur) {
     await p.waitForTimeout(400); const r = await p.evaluate(() => ({ g: window.__OFFICE.minGap(), o: window.__OFFICE.labelOverlap(), n: Object.keys(window.__OFFICE.bots).length }));

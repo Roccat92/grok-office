@@ -6,7 +6,7 @@ const CONFIG = {
   walkSpeed: 3.0,
   office: { x0: -9, x1: 10, z0: -6, z1: 7, wallH: 3.4 },
   cam: { yawDeg: 45, pitchDeg: 35, focusZoom: 0.36 },
-  desk: { cols: [-6.6, -3.8, -1.0, 1.8], rows: [-3.4, 0.9], laneA: -0.85, laneB: 3.2, laneX: 3.5 },
+  desk: { cols: [-7.3, -5.0, -2.7, -0.4, 1.9], rows: [-3.4, 0.9], laneA: -0.85, laneB: 3.2, laneX: 3.5 },
   wander: { first: [5, 11], every: [16, 32], coffee: [6, 10] },
   sep: { radius: 1.0, max: 0.75, spawnGap: 1.4 } // min distance between avatars, max sidestep, delay between entrances
 };
@@ -50,6 +50,7 @@ function wrapText(ctx, text, maxW, maxLines) {
 // ================================================================ VENUE (island + office diorama)
 const O = CONFIG.office, D = CONFIG.desk;
 const COFFEE_Z = [4.3, 5.1, 5.9];
+const SLOTS = CONFIG.desk.cols.length * 2;   // 10 desks: 5 Grok bots + 5 DevHub agents
 const slotPos = (i) => { const col = i >> 1, row = i & 1; return { x: D.cols[col], z: D.rows[row], row }; };
 const MEET = { x: 7.6, z: -3.05 };
 const MEET_SEATS = (() => {
@@ -66,7 +67,7 @@ class Venue {
     this.slab(B, F); this.floor(B); this.walls(B, F); this.meeting(B, F); this.coffee(B); this.props(B); this.ceiling(B);
     scene.add(B.build(MAT_V));
     const glass = F.build(MAT_GLASS, false, false); glass.renderOrder = 3; scene.add(glass);
-    for (let i = 0; i < 8; i++) this.slots.push(this.makeDesk(i));
+    for (let i = 0; i < SLOTS; i++) this.slots.push(this.makeDesk(i));
     this.makeBoards(); this.makeGraph();
   }
   // floor plate of the tower: office + lobby terrace with glass railing and the lift
@@ -304,11 +305,11 @@ class Venue {
     const chain = (names) => { for (let k = 0; k < names.length - 1; k++) edge(names[k], names[k + 1]); };
     // lanes
     const laneA = [], laneB = [];
-    for (let c = 0; c < 4; c++) { node('XA' + c, D.cols[c], D.laneA); node('XB' + c, D.cols[c], D.laneB); laneA.push('XA' + c); laneB.push('XB' + c); }
+    for (let c = 0; c < D.cols.length; c++) { node('XA' + c, D.cols[c], D.laneA); node('XB' + c, D.cols[c], D.laneB); laneA.push('XA' + c); laneB.push('XB' + c); }
     node('LA', D.laneX, D.laneA); node('LM', D.laneX, 1.4); node('LB', D.laneX, D.laneB); node('EN', D.laneX, O.z1 + 0.2); node('EP', D.laneX, O.z1 + 2.2); node('EO', -2.3, O.z1 + 3.3);
     chain([...laneA, 'LA']); chain([...laneB, 'LB']); chain(['LA', 'LM', 'LB', 'EN', 'EP', 'EO']);
     // desks
-    for (let i = 0; i < 8; i++) { const p = slotPos(i); node('S' + i, p.x, p.z + 1.0); edge('S' + i, (p.row ? 'XB' : 'XA') + (i >> 1)); }
+    for (let i = 0; i < SLOTS; i++) { const p = slotPos(i); node('S' + i, p.x, p.z + 1.0); edge('S' + i, (p.row ? 'XB' : 'XA') + (i >> 1)); }
     // coffee
     // three distinct standing spots at the counter (CS0..2), each reached from its own approach node (CA0..2)
     this.coffeeSpots = [];
@@ -376,6 +377,11 @@ class Actor {
     this.head = new THREE.Group(); this.head.position.set(0, 0.84, 0); this.upper.add(this.head);
     part(this.head, 0.3, 0.3, 0.3, skin, 0, 0, 0); part(this.head, 0.33, 0.12, 0.33, hair, 0, 0.17, -0.01); part(this.head, 0.33, 0.2, 0.1, hair, 0, 0.04, -0.12);
     part(this.head, 0.05, 0.05, 0.02, 0x222222, 0.07, 0.03, 0.155); part(this.head, 0.05, 0.05, 0.02, 0x222222, -0.07, 0.03, 0.155);
+    if (data.src === 'devhub') {   // DevHub agents: dark visor, antenna with a yellow tip, chest badge
+      part(this.head, 0.32, 0.09, 0.03, 0x101214, 0, 0.03, 0.16); part(this.head, 0.2, 0.02, 0.01, 0xffc629, 0, 0.03, 0.18);
+      part(this.head, 0.03, 0.17, 0.03, 0x2c3138, 0, 0.31, 0); this.tip = part(this.head, 0.08, 0.08, 0.08, 0xffc629, 0, 0.43, 0);
+      part(this.upper, 0.17, 0.11, 0.02, 0xffc629, 0.14, 0.46, 0.16); part(this.upper, 0.09, 0.04, 0.025, 0x101214, 0.14, 0.46, 0.165);
+    }
     this.arms = [];
     for (const sx of [1, -1]) {
       const sh = new THREE.Group(); sh.position.set(sx * 0.36, 0.55, 0); this.upper.add(sh);
@@ -578,6 +584,11 @@ class Rig {
 // ================================================================ DATA (fetch, normalise, diff)
 
 const SRC = QS.get('src') || './status.json';
+// DevHub link: ?devhub=URL (exporter --serve or any devhub-office/1 JSON), default ./devhub-status.json (exporter --push), ?devhub=off to disable
+const DH_RAW = QS.get('devhub'), DEVHUB_SRC = DH_RAW === 'off' ? null : (DH_RAW || './devhub-status.json');
+const DH_STALE_MS = (+QS.get('dhstale') || 300) * 1000, DH_DONE_MS = 180000;
+const DH_BRAND = { claude: '#d97757', codex: '#19b38a', 'grok-build': '#d9d9d9', grok: '#9aa3ad', openrouter: '#7b7ff5' };
+const DH_ROLE = { local_cli: 'Agent CLI', local_sdk: 'Agent SDK', model_api: 'Model API (tư vấn)', external_workflow: 'Workflow ngoài' };
 const POLL_MS = Math.max(2000, (+QS.get('interval') || 0) * 1000 || CONFIG.pollMs);
 const fmtTime = new Intl.DateTimeFormat('vi-VN', { timeZone: 'Asia/Bangkok', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
 const fmtHM = new Intl.DateTimeFormat('vi-VN', { timeZone: 'Asia/Bangkok', hour: '2-digit', minute: '2-digit', hour12: false });
@@ -595,13 +606,36 @@ function normalize(raw) {
     const state = STATE[b.state] ? b.state : 'idle';
     bots.push({
       id: b.id, name: String(b.name || b.id), role: String(b.role || ''), color: /^#[0-9a-f]{6}$/i.test(b.color) ? b.color : '#' + (hash(b.id) & 0xffffff).toString(16).padStart(6, '0'),
-      state, task: String(b.task || ''), project: String(b.project || ''), room: b.room === 'meeting' ? 'meeting' : 'desk',
+      src: b.src === 'devhub' || /^dh-/.test(b.id) ? 'devhub' : '', note: b.note ? String(b.note) : '', state, task: String(b.task || ''), project: String(b.project || ''), room: b.room === 'meeting' ? 'meeting' : 'desk',
       progress: Number.isFinite(b.progress) ? clamp(Math.round(b.progress), 0, 100) : null, since: b.since || raw.updatedAt || '',
       log: (Array.isArray(b.log) ? b.log : []).filter((l) => l && l.msg).slice(-5).map((l) => ({ t: l.t || '', msg: String(l.msg) }))
     });
   }
   const groups = (Array.isArray(raw.groups) ? raw.groups : []).filter((g) => g && g.id).map((g) => ({ id: String(g.id), name: String(g.name || g.id), members: Array.isArray(g.members) ? g.members.map(String) : [], topic: String(g.topic || ''), active: g.active === true }));
   return { version: raw.version || 1, updatedAt: raw.updatedAt || '', bots, groups };
+}
+
+// DevHub (schema devhub-office/1, written by nexa-devhub/scripts/export-office-status.mjs) -> status.json style bots.
+// mode: 'live' = fresh data, 'stale' = generatedAt too old, 'down' = source unreachable (last roster kept, everyone sleeps).
+function devhubBots(raw, mode, now = Date.now()) {
+  if (!raw || raw.schema !== 'devhub-office/1' || !Array.isArray(raw.agents)) throw new Error('devhub-status.json sai định dạng (cần schema devhub-office/1)');
+  const gen = Date.parse(raw.generatedAt);
+  return raw.agents.filter((a) => a && typeof a.id === 'string').map((a) => {
+    const bot = { id: 'dh-' + a.id, src: 'devhub', name: String(a.name || a.id), color: DH_BRAND[a.id] || '#' + (hash(a.id) & 0xffffff).toString(16).padStart(6, '0'),
+      role: 'DevHub · ' + (DH_ROLE[a.kind] || 'Agent') + (a.model ? ' · ' + a.model : ''), state: 'idle', task: '', project: '', room: 'desk', since: a.lastActivityAt || raw.generatedAt || '', log: [], note: '' };
+    const cur = a.current, last = a.last, fin = last && last.at ? now - Date.parse(last.at) : Infinity;
+    if (last) bot.log.push({ t: last.at, msg: (last.status === 'completed' ? 'Xong: ' : 'Kết thúc (' + last.status + '): ') + (last.title || 'task') });
+    if (mode !== 'live') { bot.note = mode === 'stale' ? 'DevHub chưa gửi dữ liệu mới' : 'Mất kết nối DevHub'; bot.task = bot.note; return bot; }
+    if (a.state === 'unknown') { bot.note = 'Chưa có dữ liệu từ DevHub'; bot.task = bot.note; return bot; }
+    if (a.enabled === false || a.state === 'disabled') { bot.note = 'Đã tắt trong DevHub'; bot.task = bot.note; }
+    else if (a.state === 'unavailable' || a.state === 'failed') { bot.note = a.detail || (a.authenticated === false ? 'Chưa đăng nhập' : 'Chưa sẵn sàng'); bot.task = bot.note; }
+    else if (a.state === 'waiting' || (cur && cur.status === 'waiting_approval')) { bot.state = 'blocked'; bot.task = 'Chờ duyệt: ' + ((cur && cur.title) || 'một thao tác'); }
+    else if (a.state === 'running' || cur) { bot.state = 'working'; bot.task = (cur && cur.title) || 'Đang chạy task'; if (cur) { bot.project = cur.project || ''; bot.since = cur.since || bot.since; } }
+    else if (last && fin < DH_DONE_MS && last.status === 'completed') { bot.state = 'done'; bot.task = 'Xong: ' + (last.title || 'task'); bot.project = last.project || ''; bot.since = last.at; }
+    else if (last && fin < DH_DONE_MS && last.status !== 'cancelled') { bot.state = 'blocked'; bot.task = 'Lỗi: ' + (last.title || last.status); bot.project = last.project || ''; bot.since = last.at; }
+    if (a.queued > 0 && bot.state === 'idle' && !bot.note) bot.note = a.queued + ' task đang chờ';
+    return bot;
+  });
 }
 
 // ================================================================ APP
@@ -673,17 +707,42 @@ class App {
     this.renderer.setSize(w, h, false); this.rig.resize(w, h); this.W = w; this.H = h;
   }
   // ---------------------------------------------------------------- polling
-  async poll() {
+  async fetchJSON(src) {
     const ac = new AbortController(), to = setTimeout(() => ac.abort(), CONFIG.fetchTimeoutMs);
     try {
-      const url = new URL(SRC, location.href); url.searchParams.set('_', Date.now());
+      const url = new URL(src, location.href); url.searchParams.set('_', Date.now());
       const res = await fetch(url, { cache: 'no-store', signal: ac.signal }); if (!res.ok) throw new Error('HTTP ' + res.status);
-      const data = normalize(await res.json()); this.conn.lastOk = Date.now(); this.conn.err = null; this.conn.lastFetch = Date.now();
+      return await res.json();
+    } catch (e) { throw e.name === 'AbortError' ? new Error('hết thời gian chờ') : e; } finally { clearTimeout(to); }
+  }
+  // DevHub half of a poll: live > stale > down (last roster) > bots with src "devhub" already in status.json (manual fallback)
+  async pollDevhub() {
+    const dh = this.dh = this.dh || { state: DEVHUB_SRC ? 'none' : 'off', at: 0, err: null, roster: null, gen: '' };
+    if (!DEVHUB_SRC) return [];
+    try {
+      const raw = await this.fetchJSON(DEVHUB_SRC); devhubBots(raw, 'live');   // validates the schema
+      const age = Date.now() - Date.parse(raw.generatedAt), known = raw.agents.some((a) => a.state !== 'unknown');
+      dh.roster = raw; dh.err = null; dh.at = Date.now(); dh.gen = raw.generatedAt || '';
+      const live = known && isFinite(age) && age <= DH_STALE_MS; dh.state = live ? 'live' : known ? 'stale' : 'waiting';
+      return devhubBots(raw, live || !known ? 'live' : 'stale');
+    } catch (e) {
+      dh.err = e.message;
+      if (dh.roster) { dh.state = 'down'; return devhubBots(dh.roster, 'down'); }
+      dh.state = 'none'; return [];
+    }
+  }
+  async poll() {
+    try {
+      const [raw, dhBots] = await Promise.all([this.fetchJSON(SRC), this.pollDevhub()]);
+      const data = normalize(raw);
+      if (dhBots.length) { const ids = new Set(dhBots.map((b) => b.id)); data.bots = data.bots.filter((b) => !ids.has(b.id)).concat(normalize({ bots: dhBots }).bots); }
+      if (this.dh.state === 'none' && data.bots.some((b) => b.src === 'devhub')) this.dh.state = 'fallback';   // DevHub unreachable: showing the dh-* bots stored in status.json
+      this.conn.lastOk = Date.now(); this.conn.err = null; this.conn.lastFetch = Date.now();
       this.apply(data);
     } catch (e) {
-      this.conn.err = e.name === 'AbortError' ? 'hết thời gian chờ' : e.message; this.conn.lastFetch = Date.now();
+      this.conn.err = e.message; this.conn.lastFetch = Date.now();
       if (!this.data) this.toast('Không tải được dữ liệu: ' + this.conn.err);
-    } finally { clearTimeout(to); this.tickUI(); }
+    } finally { this.tickUI(); }
   }
   apply(data) {
     const prev = this.data, first = !prev, pm = new Map((prev ? prev.bots : []).map((b) => [b.id, b])), events = [];
@@ -737,7 +796,7 @@ class App {
   }
   updateLabelText(id) {
     const l = this.labels.get(id), a = this.actors.get(id); if (!l || !a) return; const b = a.d, el = l.el;
-    el.style.setProperty('--bc', b.color); el.querySelector('b').textContent = b.name; el.querySelector('span').textContent = b.state === 'idle' ? 'Đang ngủ zzz' : (b.task || STATE[b.state].label);
+    el.style.setProperty('--bc', b.color); el.querySelector('b').textContent = b.name; el.querySelector('span').textContent = b.state === 'idle' ? 'zzz' + (b.note ? ' · ' + b.note : ' · đang ngủ') : (b.task || STATE[b.state].label);
     el.querySelector('.ico').textContent = b.state === 'blocked' ? '!' : b.state === 'done' ? '\u2713' : '';
     el.classList.toggle('blocked', b.state === 'blocked'); el.classList.toggle('done', b.state === 'done');
     l.w = el.offsetWidth; l.h = el.offsetHeight;
@@ -748,7 +807,7 @@ class App {
       const st = STATE[b.state];
       const logs = b.log.slice(-2).reverse().map((l) => `<div class="lg">${l.t ? fmtHM.format(new Date(l.t)) + ' ' : ''}${esc(l.msg)}</div>`).join('');
       return `<div class="row${this.selected === b.id ? ' sel' : ''}${flash.includes(b.id) ? ' flash' : ''}" data-id="${esc(b.id)}" style="--bc:${b.color}">
-        <div class="top"><span class="nm">${esc(b.name)}</span><span class="badge" style="color:${UI_COL[b.state]}"><i style="background:${UI_COL[b.state]}"></i>${st.label}</span></div>
+        <div class="top"><span class="nm">${b.src === 'devhub' ? '<span class="chip dh">DevHub</span> ' : ''}${esc(b.name)}</span><span class="badge" style="color:${UI_COL[b.state]}"><i style="background:${UI_COL[b.state]}"></i>${st.label}</span></div>
         <div class="role">${esc(b.role)}</div><div class="task">${esc(b.task || '-')}</div>
         ${b.progress != null ? `<div class="bar"><i style="width:${b.progress}%"></i></div>` : ''}
         <div class="meta">${b.project ? `<span class="chip">#${esc(b.project)}</span>` : ''}<span>${b.room === 'meeting' ? 'phòng họp' : 'bàn làm việc'}</span><span data-since="${esc(b.since)}">${rel(b.since)}</span></div>${logs}</div>`;
@@ -789,6 +848,11 @@ class App {
     if (c.err) { cls = 'err'; tip = 'Lỗi tải: ' + c.err; } else if (c.lastOk && Date.now() - c.lastOk > CONFIG.staleMs) { cls = 'stale'; tip = 'Dữ liệu cũ hơn 60 giây'; } else if (!c.lastOk) { cls = 'stale'; tip = 'Đang kết nối...'; }
     dot.className = cls; dot.title = tip;
     $('#upd').textContent = c.err ? 'Lỗi kết nối' + (c.lastOk ? ' (lần cuối ' + fmtTime.format(new Date(c.lastOk)) + ')' : '') : 'Cập nhật lúc ' + (c.lastOk ? fmtTime.format(new Date(c.lastOk)) : '--:--:--');
+    const dh = this.dh, el = $('#dhstat');
+    if (dh && dh.state !== 'off') {
+      const m = { live: ['ok', 'DevHub: trực tiếp (' + rel(dh.gen) + ')'], waiting: ['warn', 'DevHub: chưa có dữ liệu'], stale: ['warn', 'DevHub: dữ liệu cũ (' + rel(dh.gen) + ')'], down: ['err', 'DevHub: mất kết nối'], fallback: ['warn', 'DevHub: dùng status.json'], none: ['warn', 'DevHub: chưa nối'] }[dh.state] || ['warn', 'DevHub'];
+      el.className = 'hide-m ' + m[0]; el.textContent = m[1]; el.title = (dh.err ? 'Lỗi: ' + dh.err + '. ' : '') + 'Nguồn: ' + (DEVHUB_SRC || '-'); el.previousElementSibling.style.display = '';
+    } else { el.textContent = ''; el.previousElementSibling.style.display = 'none'; }
     if (this.data && this.data.updatedAt) $('#dataAge').textContent = 'Dữ liệu: ' + rel(this.data.updatedAt);
     document.querySelectorAll('[data-since]').forEach((e) => { const v = rel(e.dataset.since); if (e.textContent !== v) e.textContent = v; });
   }
