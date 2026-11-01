@@ -135,3 +135,10 @@ GitHub Pages từ nhánh `main`, thư mục gốc. Mỗi lần push, Pages mất
 - Tham số URL: `?time=day` (13:00), `?time=night` (23:30), `?time=cycle` (chạy nhanh 1 ngày = 72 giây, đổi bằng `&speed=<giây>`), `?hour=18.5` hoặc `?time=18.5` (ghim 1 giờ cụ thể). Khi ở chế độ demo, đồng hồ ở HUD hiện giờ mô phỏng kèm nhãn "(demo ...)".
 - Điện thoại / màn hình hẹp: ít xe và người hơn, bóng đổ 1024, pixel ratio tối đa 1.5, khung hình tập trung vào văn phòng. `?quality=low` ép chế độ nhẹ.
 - Kiểm tra: `node tests/serve.cjs` rồi `node tests/daynight.cjs`.
+
+## Zoom và giao diện vàng đen
+
+- Cuộn chuột để zoom (mượt, có easing, giới hạn 0.16x-1.25x), zoom về phía con trỏ. Cảm ứng: chụm 2 ngón. Kéo để di chuyển khi đã zoom vào.
+- Nút `+` / `-` và `TOÀN CẢNH`; nhấp đúp (double-click) để reset về toàn cảnh.
+- UI HTML dùng bảng màu đen và vàng lấy từ design tokens của DevHub (`packages/ui/src/tokens.css` trong Roccat92/nexa-devhub): nền `#080B0B`, bề mặt `#121212`, nhấn `#ffc629`. Cảnh 3D không đổi.
+- Test: `node tests/zoom.cjs` (cần server tại :8123).

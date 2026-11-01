@@ -16,6 +16,8 @@ const STATE = {
 };
 const QS = new URLSearchParams(location.search), HORIZON = isFinite(parseFloat(QS.get('horizon'))) ? parseFloat(QS.get('horizon')) : 0.12;   // screen height of the city horizon (-1 bottom .. 1 top)
 const MOBILE = QS.get('quality') === 'low' || innerWidth <= 760 || (matchMedia && matchMedia('(pointer: coarse)').matches);
+const UI_COL = { working: '#43c59e', idle: '#a3a3a3', meeting: '#7cb7ff', blocked: '#f17b82', done: '#ffc629' };   // HUD/panel status colours (DevHub tokens); the 3D screens keep STATE colours
+const ZMIN = 0.16, ZMAX = 1.25;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const lerp = (a, b, t) => a + (b - a) * t;
 const rr = (a, b) => a + Math.random() * (b - a);
@@ -544,11 +546,27 @@ class Rig {
     this.uc = uc; this.rc = rc; if (this.onFit) this.onFit();
   }
   resize(w, h) { this.aspect = w / Math.max(1, h); this.fit(); this.place(); }
+  // ---- user zoom / pan (wheel, pinch, drag). Zoom keeps the point under the cursor fixed; both zoom and target ease with the same factor in update().
+  vecs() { const y = this.yaw, p = this.pitch; return { R: [Math.cos(y), 0, -Math.sin(y)], U: [-Math.sin(p) * Math.sin(y), Math.cos(p), -Math.sin(p) * Math.cos(y)] }; }
+  zoomBy(f, nx = 0, ny = 0) {
+    const zn = clamp(this.zoomT / f, ZMIN, ZMAX), sOld = this.s0 * this.zoomT, sNew = this.s0 * zn;
+    if (!this.follow) { const { R, U } = this.vecs(), dx = nx * this.aspect * (sOld - sNew), dy = ny * (sOld - sNew); this.TT.x += R[0] * dx + U[0] * dy; this.TT.y += U[1] * dy; this.TT.z += R[2] * dx + U[2] * dy; }
+    this.zoomT = zn; this.clampPan();
+  }
+  panBy(ndx, ndy) {   // NDC delta of a drag: the scene follows the finger
+    this.follow = null; const { R, U } = this.vecs(), s = this.s0 * this.zoom, dx = -ndx * this.aspect * s, dy = -ndy * s, d = [R[0] * dx + U[0] * dy, U[1] * dy, R[2] * dx + U[2] * dy];
+    this.TT.x += d[0]; this.TT.y += d[1]; this.TT.z += d[2]; this.T.x += d[0]; this.T.y += d[1]; this.T.z += d[2]; this.clampPan();
+  }
+  clampPan() {
+    if (this.follow || !this.home) return; const { R, U } = this.vecs(), f = clamp((1.05 - this.zoomT) / 0.5, 0, 1), lr = this.s0 * this.aspect * 0.85 * f, lu = this.s0 * 0.85 * f;
+    const dx = this.TT.x - this.home.x, dy = this.TT.y - this.home.y, dz = this.TT.z - this.home.z, r = dx * R[0] + dz * R[2], u = dx * U[0] + dy * U[1] + dz * U[2];
+    const rc = clamp(r, -lr, lr), uc2 = clamp(u, -lu, lu); this.TT.x += R[0] * (rc - r) + U[0] * (uc2 - u); this.TT.y += U[1] * (uc2 - u); this.TT.z += R[2] * (rc - r) + U[2] * (uc2 - u);
+  }
   focus(actor) { this.follow = actor; this.zoomT = CONFIG.cam.focusZoom; }
   overview() { this.follow = null; this.zoomT = 1; this.TT.copy(this.home); }
   update(dt, tmp) {
     if (this.follow) { this.follow.root.getWorldPosition(tmp); tmp.y += 1.0; this.TT.copy(tmp); }
-    const k = Math.min(1, dt * 4); this.T.lerp(this.TT, k); this.zoom += (this.zoomT - this.zoom) * k; this.place();
+    const k = Math.min(1, dt * 6); this.T.lerp(this.TT, k); this.zoom += (this.zoomT - this.zoom) * k; this.place();
   }
   place() {
     const y = this.yaw, p = this.pitch, cp = Math.cos(p), c = this.cam;
@@ -730,7 +748,7 @@ class App {
       const st = STATE[b.state];
       const logs = b.log.slice(-2).reverse().map((l) => `<div class="lg">${l.t ? fmtHM.format(new Date(l.t)) + ' ' : ''}${esc(l.msg)}</div>`).join('');
       return `<div class="row${this.selected === b.id ? ' sel' : ''}${flash.includes(b.id) ? ' flash' : ''}" data-id="${esc(b.id)}" style="--bc:${b.color}">
-        <div class="top"><span class="nm">${esc(b.name)}</span><span class="badge" style="color:${st.color}"><i style="background:${st.color}"></i>${st.label}</span></div>
+        <div class="top"><span class="nm">${esc(b.name)}</span><span class="badge" style="color:${UI_COL[b.state]}"><i style="background:${UI_COL[b.state]}"></i>${st.label}</span></div>
         <div class="role">${esc(b.role)}</div><div class="task">${esc(b.task || '-')}</div>
         ${b.progress != null ? `<div class="bar"><i style="width:${b.progress}%"></i></div>` : ''}
         <div class="meta">${b.project ? `<span class="chip">#${esc(b.project)}</span>` : ''}<span>${b.room === 'meeting' ? 'phòng họp' : 'bàn làm việc'}</span><span data-since="${esc(b.since)}">${rel(b.since)}</span></div>${logs}</div>`;
@@ -741,10 +759,10 @@ class App {
   renderDetail() {
     const a = this.actors.get(this.selected), el = $('#detail'); if (!a) { el.classList.remove('on'); return; }
     const b = a.d, st = STATE[b.state];
-    el.innerHTML = `<h3 style="color:#fff"><span style="border-left:6px solid ${b.color};padding-left:8px">${esc(b.name)}</span><span class="x" id="dx">&#10005;</span></h3>
+    el.innerHTML = `<h3><span style="border-left:6px solid ${b.color};padding-left:8px">${esc(b.name)}</span><span class="x" id="dx">&#10005;</span></h3>
       <div style="font-size:12px;opacity:.7;margin-top:2px">${esc(b.role)}</div>
       <div class="task">${esc(b.task || '-')}</div>${b.progress != null ? `<div class="bar"><i style="width:${b.progress}%"></i></div>` : ''}
-      <div class="kv"><span>Trạng thái</span><span style="color:${st.color};font-weight:700">${st.label}</span><span>Dự án</span><span>${esc(b.project || '-')}</span>
+      <div class="kv"><span>Trạng thái</span><span style="color:${UI_COL[b.state]};font-weight:700">${st.label}</span><span>Dự án</span><span>${esc(b.project || '-')}</span>
       <span>Vị trí</span><span>${b.room === 'meeting' || a.wantMeeting ? 'phòng họp' : 'bàn làm việc'}</span><span>Từ</span><span data-since="${esc(b.since)}">${rel(b.since)}</span></div>
       <div class="lgs">${b.log.length ? b.log.slice().reverse().map((l) => `<div><em>${l.t ? fmtHM.format(new Date(l.t)) : ''}</em> ${esc(l.msg)}</div>`).join('') : '<em>Chưa có nhật ký</em>'}</div>`;
     el.classList.add('on'); $('#dx').onclick = () => this.select(null);
@@ -778,14 +796,34 @@ class App {
     $('#list').addEventListener('click', (e) => { const r = e.target.closest('.row'); if (r) this.select(this.selected === r.dataset.id ? null : r.dataset.id); });
     $('#overview').addEventListener('click', () => this.select(null));
     $('#sheetToggle').addEventListener('click', () => { document.body.classList.toggle('collapsed'); setTimeout(() => this.resize(), 30); });
-    let down = null;
-    this.canvas.addEventListener('pointerdown', (e) => { down = { x: e.clientX, y: e.clientY, t: performance.now() }; });
-    this.canvas.addEventListener('pointerup', (e) => {
-      if (!down || Math.hypot(e.clientX - down.x, e.clientY - down.y) > 8 || performance.now() - down.t > 600) return; down = null;
-      const rc = this.canvas.getBoundingClientRect(); this.ndc.set(((e.clientX - rc.left) / rc.width) * 2 - 1, -((e.clientY - rc.top) / rc.height) * 2 + 1);
-      this.ray.setFromCamera(this.ndc, this.rig.cam); const hits = this.ray.intersectObjects([...this.actors.values()].map((a) => a.hit), false);
-      this.select(hits.length ? hits[0].object.userData.botId : null);
+    const cv = this.canvas, ptrs = new Map(); let g = null;
+    const ndc = (x, y) => { const rc = cv.getBoundingClientRect(); return [((x - rc.left) / rc.width) * 2 - 1, -(((y - rc.top) / rc.height) * 2 - 1)]; };
+    const pick = (x, y) => { const [nx, ny] = ndc(x, y); this.ndc.set(nx, ny); this.ray.setFromCamera(this.ndc, this.rig.cam); const hits = this.ray.intersectObjects([...this.actors.values()].map((a) => a.hit), false); this.select(hits.length ? hits[0].object.userData.botId : null); };
+    const two = () => { const [a, b] = [...ptrs.values()]; return { d: Math.hypot(a.x - b.x, a.y - b.y), x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }; };
+    cv.addEventListener('pointerdown', (e) => {
+      try { cv.setPointerCapture(e.pointerId); } catch (_) {} ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (ptrs.size === 1) g = { x0: e.clientX, y0: e.clientY, t: performance.now(), moved: false }; else if (ptrs.size === 2) { g = { moved: true, ...two() }; }
     });
+    cv.addEventListener('pointermove', (e) => {
+      const p = ptrs.get(e.pointerId); if (!p || !g) return; const px = p.x, py = p.y; p.x = e.clientX; p.y = e.clientY;
+      if (ptrs.size === 2) {   // pinch zoom around the midpoint + two-finger pan
+        const c = two(), [nx, ny] = ndc(c.x, c.y); if (g.d > 0) this.rig.zoomBy(c.d / g.d, nx, ny);
+        const rc = cv.getBoundingClientRect(); this.rig.panBy((c.x - g.x) / rc.width * 2, -(c.y - g.y) / rc.height * 2); g.d = c.d; g.x = c.x; g.y = c.y; return;
+      }
+      if (!g.moved && Math.hypot(e.clientX - g.x0, e.clientY - g.y0) > 8) g.moved = true;
+      if (g.moved && ptrs.size === 1) { const rc = cv.getBoundingClientRect(); this.rig.panBy((e.clientX - px) / rc.width * 2, -(e.clientY - py) / rc.height * 2); }
+    });
+    const up = (e) => {
+      if (!ptrs.has(e.pointerId)) return; const wasClick = ptrs.size === 1 && g && !g.moved && performance.now() - g.t < 600 && e.type === 'pointerup';
+      ptrs.delete(e.pointerId); if (wasClick) pick(e.clientX, e.clientY); if (ptrs.size === 1) g = { moved: true }; else if (!ptrs.size) g = null;
+    };
+    cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
+    cv.addEventListener('wheel', (e) => {
+      e.preventDefault(); const dy = e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1), [nx, ny] = ndc(e.clientX, e.clientY);
+      this.rig.zoomBy(clamp(Math.exp(-dy * (e.ctrlKey ? 0.01 : 0.0016)), 0.6, 1.6), nx, ny);
+    }, { passive: false });
+    cv.addEventListener('dblclick', () => this.select(null));   // reset view
+    $('#zin').addEventListener('click', () => this.rig.zoomBy(1.35)); $('#zout').addEventListener('click', () => this.rig.zoomBy(1 / 1.35));
   }
   // ---------------------------------------------------------------- frame
   frame(now) {
